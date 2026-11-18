@@ -130,7 +130,7 @@
             <div class="user-sub-status" id="local-quality-tag">Somente Tela + Áudio PC</div>
           </div>
         </div>
-        <span class="version-tag" id="sidebar-version-tag">v9.3.1</span>
+        <span class="version-tag" id="sidebar-version-tag">v9.5.1</span>
       </div>
     </aside>
 
@@ -288,7 +288,7 @@
               </div>
               <div class="hud-item">
                 <span class="hud-label">Encoder Ativo</span>
-                <span class="hud-val" id="stat-codec">H.264 GPU</span>
+                <span class="hud-val" id="stat-codec">WebRTC</span>
               </div>
               <div class="hud-item">
                 <span class="hud-label">Áudio da Tela</span>
@@ -296,7 +296,7 @@
               </div>
               <div class="hud-item">
                 <span class="hud-label">Versão do App</span>
-                <span class="hud-val" id="stat-loss">v9.3.1</span>
+                <span class="hud-val" id="stat-loss">v9.5.1</span>
               </div>
             </div>
           </div>
@@ -448,7 +448,7 @@
           <div>
             <label class="section-label" for="preset-select">CODIFICAÇÃO DE VÍDEO</label>
             <select id="preset-select" class="discord-select">
-              <option value="motion" selected>🚀 GPU Hardware (NVENC / AMF)</option>
+              <option value="motion" selected>🚀 Automático (priorizar fluidez)</option>
               <option value="detail">💎 Nitidez / Texto</option>
               <option value="av1">⚡ AV1 / Alternativo</option>
             </select>
@@ -456,7 +456,7 @@
 
           <div>
             <div class="label-row">
-              <label class="section-label" for="bitrate-slider">BITRATE ALVO</label>
+              <label class="section-label" for="bitrate-slider">LIMITE TOTAL DE VÍDEO</label>
               <span class="bitrate-readout" id="bitrate-value-label">12.0 Mbps</span>
             </div>
             <input type="range" id="bitrate-slider" min="2500" max="25000" step="500" value="12000" />

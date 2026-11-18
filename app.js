@@ -1,6 +1,6 @@
-// StreamCord v9.3.1 — Motor Nativo Embutido (Zero Navegador) + 60 FPS Cravados em Jogos (maintain-framerate) + Auto-Updater Corrigido
+// StreamCord — cliente web e interface Windows em WebView2.
 (() => {
-  const APP_VERSION = '9.5.0';
+  const APP_VERSION = '9.5.1';
 
   const RTC_CONFIG = {
     iceServers: [
@@ -201,8 +201,6 @@
     framesCapturedCount: 0,
     bytesTransferredThisSec: 0,
     lastStatsTime: performance.now(),
-    prevWebrtcBytes: 0,
-    prevWebrtcFrames: 0,
 
     updateAvailable: false,
     latestVersion: APP_VERSION,
@@ -852,8 +850,10 @@
   function closeScreenOutPc(viewerId) {
     const entry = state.screenOutPcs.get(viewerId);
     if (entry) {
-      try { entry.pc.close(); } catch (e) {}
       state.screenOutPcs.delete(viewerId);
+      if (entry.watchdogTimer) clearTimeout(entry.watchdogTimer);
+      entry.pc.close();
+      rebalanceViewerBitrates();
     }
     state.activeFallbackViewers.delete(viewerId);
   }
@@ -927,23 +927,16 @@
             user: getMyStateObject(),
             requestReplies: false,
           });
-          if (state.isStreaming && u.channelId === state.currentChannelId) {
-            await startScreenOutPcForViewer(u.id, false);
-          }
         }
 
         if (
           state.currentChannelId &&
           u.channelId === state.currentChannelId &&
           u.streaming &&
-          !state.isStreaming &&
-          (!state.spotlightPeerId || !wasStreaming)
+          !wasStreaming
         ) {
-          if (!wasStreaming) {
-            playDiscordSound('stream-start');
-            showToast(`${u.username} iniciou uma transmissão ao vivo!`, '🔴');
-          }
-          watchFriendStream(u.id, false);
+          playDiscordSound('stream-start');
+          showToast(`${u.username} iniciou uma transmissão ao vivo!`, '🔴');
         } else if (state.spotlightPeerId === u.id && (!u.streaming || u.channelId !== state.currentChannelId)) {
           closeSpotlight();
         }
@@ -955,7 +948,11 @@
 
       case 'watch-request': {
         if (state.isStreaming && state.localScreenStream) {
-          await startScreenOutPcForViewer(msg.senderId, Boolean(msg.force));
+          const entry = state.screenOutPcs.get(msg.senderId);
+          // Evita que a repetição automática derrube uma negociação ICE ainda em curso.
+          if (!msg.retry || !entry || Date.now() - entry.createdAt >= 15000) {
+            await startScreenOutPcForViewer(msg.senderId, Boolean(msg.force));
+          }
         }
         break;
       }
@@ -963,9 +960,8 @@
       case 'screen-offer': {
         if (
           !state.isStreaming &&
-          (!state.spotlightPeerId || state.spotlightPeerId === state.clientId || state.spotlightPeerId === msg.senderId)
+          state.spotlightPeerId === msg.senderId
         ) {
-          openSpotlight(msg.senderId);
           await handleIncomingScreenOffer(msg.senderId, msg.sdp, msg.sessionId);
         }
         break;
@@ -981,6 +977,7 @@
           try {
             await outEntry.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
             outEntry.remoteDescSet = true;
+            rebalanceViewerBitrates();
             for (const c of outEntry.pendingCandidates) {
               try { await outEntry.pc.addIceCandidate(new RTCIceCandidate(c)); } catch (e) {}
             }
@@ -1526,7 +1523,7 @@
       state.localCaptureWs = capWs;
 
       capWs.onmessage = async (ev) => {
-        if (!state.isStreaming) return;
+        if (!state.isStreaming || state.localCaptureWs !== capWs) return;
         state.nextFrameBlob = ev.data;
         state.bytesTransferredThisSec += ev.data.size;
         if (state.decodingFrame) return;
@@ -1537,6 +1534,10 @@
             const blob = state.nextFrameBlob;
             state.nextFrameBlob = null;
             const bmp = await createImageBitmap(blob);
+            if (!state.isStreaming || state.localCaptureWs !== capWs) {
+              bmp.close();
+              break;
+            }
             if (state.captureCanvas.width !== bmp.width || state.captureCanvas.height !== bmp.height) {
               state.captureCanvas.width = bmp.width;
               state.captureCanvas.height = bmp.height;
@@ -1550,6 +1551,11 @@
           state.decodingFrame = false;
         }
       };
+      capWs.onclose = () => {
+        if (state.localCaptureWs !== capWs || !state.isStreaming) return;
+        stopScreenShare(true);
+        showToast('A conexão com a captura de tela foi encerrada.', '⚠️');
+      };
 
       state.localScreenStream = state.captureCanvas.captureStream(cfg.fps);
       const cvTrack = state.localScreenStream.getVideoTracks()[0];
@@ -1562,6 +1568,7 @@
       }
     }
 
+    if (state.spotlightPeerId) closeSpotlight();
     state.isStreaming = true;
     document.body.classList.add('is-streaming-local');
     state.showSelfPreview = isMobileDevice;
@@ -1578,13 +1585,6 @@
     announcePresence(false);
     updateStreamControlsUI();
     openSpotlight(state.clientId);
-
-    const peersInRoom = getUsersInChannel(state.currentChannelId);
-    for (const u of peersInRoom) {
-      if (u.id !== state.clientId) {
-        startScreenOutPcForViewer(u.id, false);
-      }
-    }
   }
 
   function stopScreenShare(notify = true) {
@@ -1656,8 +1656,6 @@
       const caps = RTCRtpSender.getCapabilities('video');
       if (!caps || !caps.codecs) return;
 
-      const useAltFirst = forceAlt || state.streamSettings.preset === 'av1' || state.streamSettings.preset === 'vp8';
-
       const gpuHighH264 = [];
       const av1List = [];
       const vp9List = [];
@@ -1689,9 +1687,13 @@
       gpuHighH264.sort((a, b) => b.rank - a.rank);
       const sortedGpuH264 = gpuHighH264.map((x) => x.c);
 
-      const ordered = useAltFirst
-        ? [...av1List, ...vp9List, ...vp8List, ...sortedGpuH264, ...lowH264, ...restCodecs]
-        : [...sortedGpuH264, ...av1List, ...vp9List, ...vp8List, ...lowH264, ...restCodecs];
+      const preset = state.streamSettings.preset;
+      const preferred = forceAlt || preset === 'vp8'
+        ? vp8List
+        : preset === 'av1' ? av1List : sortedGpuH264;
+      const ordered = [...new Set([
+        ...preferred, ...sortedGpuH264, ...vp8List, ...lowH264, ...vp9List, ...av1List, ...restCodecs,
+      ])];
 
       if (ordered.length === 0) return;
 
@@ -1703,69 +1705,74 @@
     } catch (e) {}
   }
 
-  function boostSdpQuality(sdp, targetBps) {
-    // 1. Áudio Opus Estéreo 192 kbps CBR sem DTX (zero cortes em momentos silenciosos do jogo)
-    let out = sdp.replace(
+  function preferStereoOpus(sdp) {
+    return sdp.replace(
       /a=fmtp:(\d+) minptime=10;useinbandfec=1/g,
-      'a=fmtp:$1 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=192000;cbr=1;usedtx=0'
+      'a=fmtp:$1 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=192000'
     );
-    // 2. Vídeo começa em nitidez total instantaneamente (<0.3s) sem rampa lenta de 300kbps!
-    const maxKbps = Math.max(3000, Math.round((targetBps || 12000000) / 1000));
-    const startKbps = Math.max(2500, Math.round(maxKbps * 0.75));
-    const minKbps = Math.max(2000, Math.round(maxKbps * 0.4));
-    out = out.replace(/a=fmtp:(\d+) ([^\r\n]+)/g, (line, pt, params) => {
-      if (params.includes('apt=') || params.includes('minptime=') || params.includes('x-google-start-bitrate')) {
-        return line;
-      }
-      return `a=fmtp:${pt} ${params};x-google-start-bitrate=${startKbps};x-google-min-bitrate=${minKbps};x-google-max-bitrate=${maxKbps}`;
-    });
-    return out;
   }
 
-  async function applyOptimalSenderParams(sender, targetBps) {
+  function getViewerEncoding() {
+    const count = Math.max(1, state.screenOutPcs.size);
+    const { bitrateKbps, fps, resolution } = state.streamSettings;
+    const videoTrack = state.localScreenStream?.getVideoTracks()[0];
+    const sourceHeight = videoTrack?.getSettings().height || 0;
+    const selectedHeight = RESOLUTION_MAP[resolution]?.heightNum;
+    // The canvas can still be 300x150 before the first native capture frame.
+    const height = selectedHeight
+      ? Math.min(selectedHeight, sourceHeight >= 360 ? sourceHeight : selectedHeight)
+      : (sourceHeight >= 360 ? sourceHeight : 1440);
+
+    const totalBps = Math.min(25000, Math.max(2500, Number(bitrateKbps) || 12000)) * 1000;
+    const perViewerBps = Math.max(1, Math.floor(totalBps / count));
+    // Bound the total pixel rate while retaining at least 360p when possible.
+    const pixelScale = Math.sqrt(count);
+    const bandwidthScale = Math.sqrt((3000000 * (height / 720) ** 2 * fps / 60) / perViewerBps);
+    const scale = Math.max(1, Math.min(height / 360, Math.max(pixelScale, bandwidthScale)));
+
+    return {
+      maxBitrate: perViewerBps,
+      maxFramerate: fps,
+      scaleResolutionDownBy: Math.round(scale * 100) / 100,
+    };
+  }
+
+  async function applyViewerEncoding(entry) {
+    if (!entry.videoSender || !entry.offerSent || entry.applyingEncoding) return;
+    entry.applyingEncoding = true;
     try {
-      const params = sender.getParameters();
-      if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-      params.encodings[0].maxBitrate = targetBps;
-      params.encodings[0].maxFramerate = state.streamSettings.fps;
-      params.encodings[0].scaleResolutionDownBy = 1.0;
-      params.encodings[0].priority = 'high';
-      params.encodings[0].networkPriority = 'high';
-      params.degradationPreference = state.streamSettings.preset === 'detail' ? 'maintain-resolution' : 'maintain-framerate';
-      try {
-        await sender.setParameters(params);
-      } catch (e) {
-        try {
-          params.degradationPreference = 'maintain-framerate';
-          await sender.setParameters(params);
-        } catch (e2) {}
+      while (entry.appliedEncoding !== entry.desiredEncoding && entry.pc.signalingState !== 'closed') {
+        const encoding = entry.desiredEncoding;
+        const params = entry.videoSender.getParameters();
+        if (!params.encodings?.length) return;
+        Object.assign(params.encodings[0], encoding);
+        params.degradationPreference = 'maintain-framerate';
+        await entry.videoSender.setParameters(params);
+        entry.appliedEncoding = encoding;
       }
-    } catch (e) {}
+    } catch (error) {
+      if (entry.pc.signalingState !== 'closed') {
+        console.warn('Não foi possível ajustar o envio de vídeo:', error);
+      }
+    } finally {
+      entry.applyingEncoding = false;
+    }
   }
 
-  function computePerViewerBitrateBps() {
-    const viewerCount = Math.max(1, state.screenOutPcs.size);
-    const baseKbps = state.streamSettings.bitrateKbps || 15000;
-    // Evita bufferbloat no roteador em teamfights com múltiplos amigos assistindo ao mesmo tempo!
-    if (viewerCount === 1) return baseKbps * 1000;
-    if (viewerCount === 2) return Math.min(baseKbps, 11000) * 1000;
-    return Math.min(baseKbps, Math.max(5000, Math.floor(24000 / viewerCount))) * 1000;
-  }
-
-  async function rebalanceViewerBitrates() {
-    const targetBps = computePerViewerBitrateBps();
+  function rebalanceViewerBitrates() {
+    const encoding = getViewerEncoding();
     for (const entry of state.screenOutPcs.values()) {
-      if (!entry.pc) continue;
-      for (const sender of entry.pc.getSenders()) {
-        if (sender.track && sender.track.kind === 'video') {
-          await applyOptimalSenderParams(sender, targetBps);
-        }
+      const previous = entry.desiredEncoding;
+      if (!previous || Object.keys(encoding).some((key) => encoding[key] !== previous[key])) {
+        entry.desiredEncoding = encoding;
       }
+      void applyViewerEncoding(entry);
     }
   }
 
   async function startScreenOutPcForViewer(viewerId, forceRecreate = false, forceAlt = false) {
-    if (!state.localScreenStream) return;
+    if (!state.isStreaming || !state.localScreenStream || viewerId === state.clientId ||
+        state.onlineUsers.get(viewerId)?.channelId !== state.currentChannelId) return;
 
     const existing = state.screenOutPcs.get(viewerId);
     if (existing && !forceRecreate) {
@@ -1780,11 +1787,7 @@
       }
     }
 
-    if (existing) {
-      if (existing.watchdogTimer) clearTimeout(existing.watchdogTimer);
-      try { existing.pc.close(); } catch (e) {}
-      state.screenOutPcs.delete(viewerId);
-    }
+    if (existing) closeScreenOutPc(viewerId);
 
     const sessionId = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     const pc = new RTCPeerConnection(RTC_CONFIG);
@@ -1800,52 +1803,36 @@
     };
     state.screenOutPcs.set(viewerId, outEntry);
 
-    const checkClean = () => {
-      const st = pc.connectionState || pc.iceConnectionState;
-      if (st === 'failed' || st === 'closed') {
-        if (state.screenOutPcs.get(viewerId) === outEntry) {
-          closeScreenOutPc(viewerId);
-          rebalanceViewerBitrates();
-        }
-      }
-    };
-    pc.onconnectionstatechange = checkClean;
-    pc.oniceconnectionstatechange = checkClean;
+    const isCurrent = () => state.screenOutPcs.get(viewerId) === outEntry;
 
-    const targetBps = computePerViewerBitrateBps();
-    for (const track of state.localScreenStream.getTracks()) {
-      const sender = pc.addTrack(track, state.localScreenStream);
-      if (track.kind === 'video') {
-        await applyOptimalSenderParams(sender, targetBps);
-      }
-    }
-
-    preferOptimalGameCodec(pc, forceAlt);
-    rebalanceViewerBitrates();
-
-    // Watchdog Anti-Tela Preta: Se o encoder H.264 da GPU travar em algum driver (0 quadros enviados),
-    // faz fallback automático transparente para AV1/VP8 em 3.2 segundos!
-    if (!forceAlt && state.streamSettings.preset !== 'av1' && state.streamSettings.preset !== 'vp8') {
-      outEntry.watchdogTimer = setTimeout(async () => {
-        if (state.screenOutPcs.get(viewerId) !== outEntry || !state.isStreaming) return;
-        const st = pc.connectionState || pc.iceConnectionState;
-        if (st === 'connected' || st === 'completed') {
+    const onConnectionStateChange = () => {
+      if (!isCurrent()) return;
+      const connected = pc.connectionState === 'connected' ||
+        (!pc.connectionState && ['connected', 'completed'].includes(pc.iceConnectionState));
+      if (pc.connectionState === 'failed' || pc.iceConnectionState === 'failed' ||
+          pc.signalingState === 'closed') {
+        closeScreenOutPc(viewerId);
+      } else if (connected && !forceAlt && !outEntry.watchdogTimer) {
+        outEntry.watchdogTimer = setTimeout(async () => {
+          if (!isCurrent() || !state.isStreaming) return;
           try {
-            let sent = 0;
             const stats = await pc.getStats();
-            stats.forEach((r) => {
-              if (r.type === 'outbound-rtp' && r.kind === 'video') sent += r.framesSent || 0;
-            });
-            if (sent === 0) {
-              startScreenOutPcForViewer(viewerId, true, true);
+            const reports = [...stats.values()].filter((r) => r.type === 'outbound-rtp' && r.kind === 'video');
+            if (isCurrent() && reports.length && reports.every((r) => r.framesSent === 0)) {
+              void startScreenOutPcForViewer(viewerId, true, true);
             }
           } catch (e) {}
-        }
-      }, 3200);
-    }
+        }, 3200);
+      }
+    };
+    pc.onconnectionstatechange = onConnectionStateChange;
+    pc.oniceconnectionstatechange = onConnectionStateChange;
+
+    const stream = state.localScreenStream;
+    rebalanceViewerBitrates();
 
     pc.onicecandidate = ({ candidate }) => {
-      if (!candidate) return;
+      if (!candidate || !isCurrent()) return;
       if (outEntry.offerSent) {
         publishDirect(viewerId, {
           type: 'screen-ice',
@@ -1859,11 +1846,26 @@
     };
 
     try {
+      for (const track of stream.getTracks()) {
+        if (track.kind === 'video') {
+          outEntry.videoSender = pc.addTransceiver(track, {
+            direction: 'sendonly',
+            streams: [stream],
+            sendEncodings: [outEntry.desiredEncoding],
+          }).sender;
+        } else {
+          pc.addTrack(track, stream);
+        }
+      }
+      preferOptimalGameCodec(pc, forceAlt);
       const offer = await pc.createOffer();
-      offer.sdp = boostSdpQuality(offer.sdp, targetBps);
+      if (!isCurrent()) return;
+      offer.sdp = preferStereoOpus(offer.sdp);
       await pc.setLocalDescription(offer);
+      if (!isCurrent()) return;
 
       outEntry.offerSent = true;
+      void applyViewerEncoding(outEntry);
       publishDirect(viewerId, {
         type: 'screen-offer',
         sessionId,
@@ -1879,10 +1881,17 @@
         });
       }
       outEntry.localIceBuffer = [];
-    } catch (e) {}
+    } catch (error) {
+      if (isCurrent()) {
+        closeScreenOutPc(viewerId);
+        console.warn('Não foi possível abrir a transmissão para o espectador:', error);
+      }
+    }
   }
 
   function watchFriendStream(streamerId, force = false) {
+    if (state.isStreaming) return;
+    if (state.spotlightPeerId && state.spotlightPeerId !== streamerId) closeSpotlight();
     openSpotlight(streamerId);
     setMobileTab('stage');
 
@@ -1903,10 +1912,11 @@
     state.watchRetryTimer = setInterval(() => {
       if (state.spotlightPeerId !== streamerId || state.webrtcVideoActive) {
         clearInterval(state.watchRetryTimer);
+        state.watchRetryTimer = null;
         return;
       }
-      publishDirect(streamerId, { type: 'watch-request', force: true });
-    }, 5500);
+      publishDirect(streamerId, { type: 'watch-request', force: true, retry: true });
+    }, 8000);
   }
 
   function unlockPendingRemoteAudio() {
@@ -1983,12 +1993,8 @@
     };
 
     pc.ontrack = (ev) => {
+      if (state.screenInEntry !== inEntry || state.spotlightPeerId !== streamerId) return;
       els.spotlightCanvas.classList.add('hidden');
-      // Buffer de playout ultra baixo (~25ms) para fluidez imediata em jogos rápidos (Deadlock/CS2)
-      if (ev.receiver && 'playoutDelayHint' in ev.receiver) {
-        try { ev.receiver.playoutDelayHint = 0.025; } catch (e) {}
-      }
-
       if (ev.track.kind === 'video') {
         if (!inEntry.remoteVideoStream.getTracks().some((t) => t.id === ev.track.id)) {
           inEntry.remoteVideoStream.addTrack(ev.track);
@@ -2045,8 +2051,9 @@
       inEntry.pendingCandidates = [];
 
       const answer = await pc.createAnswer();
-      answer.sdp = boostSdpQuality(answer.sdp, 20000000);
+      answer.sdp = preferStereoOpus(answer.sdp);
       await pc.setLocalDescription(answer);
+      if (state.screenInEntry !== inEntry) return;
 
       inEntry.answerSent = true;
       publishDirect(streamerId, {
@@ -2149,7 +2156,10 @@
     if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
     els.dockBtnLeave.classList.add('hidden');
     if (els.mobLiveDot) els.mobLiveDot.classList.add('hidden');
-    if (state.watchRetryTimer) clearInterval(state.watchRetryTimer);
+    if (state.watchRetryTimer) {
+      clearInterval(state.watchRetryTimer);
+      state.watchRetryTimer = null;
+    }
     if (state.screenInEntry && state.screenInEntry.pc) {
       try { state.screenInEntry.pc.close(); } catch (e) {}
       state.screenInEntry = null;
@@ -2241,8 +2251,23 @@
   });
 
   // Telemetria a cada 1s (Pausa automaticamente quando a janela está atrás do jogo p/ 0% de custo de CPU/IPC!)
-  let prevOutboundBytes = 0;
-  let prevOutboundFrames = 0;
+  const previousVideoStats = new WeakMap();
+
+  function sampleVideoStats(pc, report) {
+    const previous = previousVideoStats.get(pc);
+    const outbound = report.type === 'outbound-rtp';
+    const frames = outbound ? report.framesSent : report.framesDecoded;
+    const bytes = outbound ? report.bytesSent : report.bytesReceived;
+    previousVideoStats.set(pc, { id: report.id, timestamp: report.timestamp, frames, bytes });
+    const elapsed = previous?.id === report.id ? (report.timestamp - previous.timestamp) / 1000 : 0;
+    const validInterval = elapsed > 0 && elapsed <= 5;
+    return {
+      fps: report.framesPerSecond ?? (validInterval && frames >= previous.frames
+        ? (frames - previous.frames) / elapsed : null),
+      mbps: validInterval && bytes >= previous.bytes
+        ? ((bytes - previous.bytes) * 8 / elapsed / 1_000_000).toFixed(1) : null,
+    };
+  }
 
   setInterval(async () => {
     const hudVisible = Boolean(els.rtcTelemetryHud && !els.rtcTelemetryHud.classList.contains('hidden'));
@@ -2275,7 +2300,7 @@
       if (vt && vt.getSettings) {
         const s = vt.getSettings();
         if (s.width && s.height) resText = `${s.width}×${s.height}`;
-        if (s.frameRate && fps === 0) fps = Math.round(s.frameRate);
+        if (!state.localCaptureWs) fps = null;
       }
 
       let activeOut = null;
@@ -2296,58 +2321,47 @@
         try {
           const stats = await activeOut.pc.getStats();
           stats.forEach((r) => {
-            if (r.type === 'outbound-rtp' && r.kind === 'video') {
-              if (r.framesPerSecond !== undefined && r.framesPerSecond > 0) {
-                fps = Math.round(r.framesPerSecond);
-              } else if (r.framesSent !== undefined) {
-                const df = r.framesSent - prevOutboundFrames;
-                if (df > 0) fps = Math.round(df / dt);
-                prevOutboundFrames = r.framesSent;
-              }
-              const deltaB = r.bytesSent - prevOutboundBytes;
-              if (deltaB >= 0) mbps = ((deltaB * 8) / dt / 1_000_000).toFixed(1);
-              prevOutboundBytes = r.bytesSent;
-
-              if (els.statCodec) {
-                els.statCodec.textContent = r.powerEfficientEncoder ? 'GPU Hardware' : 'VP8/H264 Turbo';
-              }
+            if (r.type !== 'outbound-rtp' || r.kind !== 'video') return;
+            const sample = sampleVideoStats(activeOut.pc, r);
+            fps = sample.fps;
+            mbps = sample.mbps;
+            if (r.frameWidth && r.frameHeight) resText = `${r.frameWidth}×${r.frameHeight}`;
+            if (els.statCodec) {
+              const codec = stats.get(r.codecId)?.mimeType?.split('/')[1] || 'WebRTC';
+              els.statCodec.textContent = r.powerEfficientEncoder ? `${codec} (GPU)` : codec;
             }
           });
         } catch (e) {}
       }
     }
 
-    if (state.screenInEntry && state.screenInEntry.pc && state.spotlightPeerId !== state.clientId && state.webrtcVideoActive) {
+    const inEntry = state.screenInEntry;
+    if (inEntry && state.spotlightPeerId === inEntry.streamerId) {
       try {
-        const stats = await state.screenInEntry.pc.getStats();
+        const stats = await inEntry.pc.getStats();
+        if (state.screenInEntry !== inEntry) return;
         stats.forEach((r) => {
-          if (r.type === 'inbound-rtp' && r.kind === 'video') {
-            if (r.framesPerSecond !== undefined) {
-              fps = Math.round(r.framesPerSecond);
-            } else if (r.framesDecoded !== undefined) {
-              const df = r.framesDecoded - state.prevWebrtcFrames;
-              if (df >= 0) fps = Math.round(df / dt);
-              state.prevWebrtcFrames = r.framesDecoded;
-            }
-            if (r.frameWidth && r.frameHeight) resText = `${r.frameWidth}×${r.frameHeight}`;
-            const deltaB = r.bytesReceived - state.prevWebrtcBytes;
-            if (deltaB >= 0) mbps = ((deltaB * 8) / dt / 1_000_000).toFixed(1);
-            state.prevWebrtcBytes = r.bytesReceived;
-          }
+          if (r.type !== 'inbound-rtp' || r.kind !== 'video') return;
+          const sample = sampleVideoStats(inEntry.pc, r);
+          fps = sample.fps;
+          mbps = sample.mbps;
+          if (r.frameWidth && r.frameHeight) resText = `${r.frameWidth}×${r.frameHeight}`;
         });
       } catch (e) {}
     }
+    const fpsText = fps === null ? '— FPS' : `${Math.round(fps)} FPS`;
+    const mbpsText = mbps === null ? '— Mbps' : `${mbps} Mbps`;
 
     if (hudVisible) {
       els.statResolution.textContent = resText;
-      els.statFps.textContent = `${fps} FPS`;
-      els.statBitrate.textContent = `${mbps} Mbps`;
+      els.statFps.textContent = fpsText;
+      els.statBitrate.textContent = mbpsText;
     }
 
     if (overlayVisible) {
       els.spotlightResBadge.textContent = resText;
-      els.spotlightFpsBadge.textContent = `${fps} FPS`;
-      els.spotlightBitrateBadge.textContent = `${mbps} Mbps`;
+      els.spotlightFpsBadge.textContent = fpsText;
+      els.spotlightBitrateBadge.textContent = mbpsText;
     }
   }, 1000);
 
@@ -2362,6 +2376,10 @@
   function switchChannel(channelId) {
     const ch = state.channels.find((c) => c.id === channelId);
     if (!ch) return;
+    if (state.currentChannelId !== ch.id) {
+      if (state.spotlightPeerId !== state.clientId) closeSpotlight();
+      for (const viewerId of state.screenOutPcs.keys()) closeScreenOutPc(viewerId);
+    }
     state.currentChannelId = ch.id;
     els.stageTitle.textContent = ch.name;
     els.voiceCurrentChannelName.textContent = ch.name;
@@ -3102,6 +3120,8 @@
       localStorage.setItem('streamcord_username', state.username);
     }
     if (newRoom && newRoom !== state.roomCode) {
+      if (state.isStreaming) stopScreenShare(true);
+      else closeSpotlight();
       state.roomCode = newRoom.replace(/[^A-Z0-9_-]/g, '').slice(0, 24) || 'IGOR-2K60';
       localStorage.setItem('streamcord_room', state.roomCode);
       state.onlineUsers.clear();
