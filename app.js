@@ -1,6 +1,6 @@
 // StreamCord v9.3.1 — Motor Nativo Embutido (Zero Navegador) + 60 FPS Cravados em Jogos (maintain-framerate) + Auto-Updater Corrigido
 (() => {
-  const APP_VERSION = '9.3.1';
+  const APP_VERSION = '9.4.0';
 
   const RTC_CONFIG = {
     iceServers: [
@@ -524,6 +524,9 @@
     btnRefreshSources: document.getElementById('btn-refresh-sources'),
     sourcesGrid: document.getElementById('sources-grid'),
     audioModeSelect: document.getElementById('audio-mode-select'),
+    resolutionSelect: document.getElementById('resolution-select'),
+    fpsSelect: document.getElementById('fps-select'),
+    presetSelect: document.getElementById('preset-select'),
     btnCloseStreamModal: document.getElementById('btn-close-stream-modal'),
     btnCancelStream: document.getElementById('btn-cancel-stream'),
     btnConfirmGoLive: document.getElementById('btn-confirm-go-live'),
@@ -765,8 +768,10 @@
       state.cloudMqtt = null;
     }
 
-    els.cloudStatusPill.textContent = '☁️ CONECTANDO...';
-    els.cloudStatusPill.classList.add('connecting');
+    if (els.cloudStatusPill) {
+      els.cloudStatusPill.title = 'Conectando...';
+      els.cloudStatusPill.classList.add('connecting');
+    }
 
     const mqttId = 'sc11_' + state.clientId + '_' + Math.random().toString(36).slice(2, 6);
     state.cloudMqtt = new MiniMqttOverWs(
@@ -774,8 +779,10 @@
       mqttId,
       () => {
         state.cloudConnected = true;
-        els.cloudStatusPill.textContent = '☁️ ONLINE';
-        els.cloudStatusPill.classList.remove('connecting');
+        if (els.cloudStatusPill) {
+          els.cloudStatusPill.title = 'Online';
+          els.cloudStatusPill.classList.remove('connecting');
+        }
 
         state.cloudMqtt.subscribe(getTopicBroadcast());
         state.cloudMqtt.subscribe(getTopicDirect(state.clientId));
@@ -788,8 +795,10 @@
       },
       () => {
         state.cloudConnected = false;
-        els.cloudStatusPill.textContent = '☁️ RECONECTANDO';
-        els.cloudStatusPill.classList.add('connecting');
+        if (els.cloudStatusPill) {
+          els.cloudStatusPill.title = 'Reconectando...';
+          els.cloudStatusPill.classList.add('connecting');
+        }
         setTimeout(connectCloudSignaling, 1500);
       }
     );
@@ -1405,15 +1414,17 @@
   async function startNativeScreenShare() {
     stopScreenShare(false);
 
-    const activeResBtn = document.querySelector('#resolution-group .seg-btn.active');
-    if (activeResBtn && activeResBtn.dataset.res) {
-      state.streamSettings.resolution = activeResBtn.dataset.res;
+    if (els.resolutionSelect && els.resolutionSelect.value) {
+      state.streamSettings.resolution = els.resolutionSelect.value;
       localStorage.setItem('streamcord_res', state.streamSettings.resolution);
     }
-    const activeFpsBtn = document.querySelector('#fps-group .seg-btn.active');
-    if (activeFpsBtn && activeFpsBtn.dataset.fps) {
-      state.streamSettings.fps = Number(activeFpsBtn.dataset.fps);
+    if (els.fpsSelect && els.fpsSelect.value) {
+      state.streamSettings.fps = Number(els.fpsSelect.value);
       localStorage.setItem('streamcord_fps', String(state.streamSettings.fps));
+    }
+    if (els.presetSelect && els.presetSelect.value) {
+      state.streamSettings.preset = els.presetSelect.value;
+      localStorage.setItem('streamcord_preset', state.streamSettings.preset);
     }
 
     const cfg = state.streamSettings;
@@ -1428,64 +1439,48 @@
         return;
       }
     } else {
-      // 1º Adquire o vídeo via DirectX 11 / WGC Zero-Copy Nativo (sem fallback oculto p/ GDI caso o usuário cancele!)
-      const gpuCapture = await acquireZeroCopyGpuStream(cfg, resSpec, false);
-      if (gpuCapture.cancelled) {
-        showToast('Seleção de tela cancelada.', 'ℹ️');
-        return;
-      }
-
-      // 2º Inicia a captura de áudio WASAPI VTable (Discord 100% Silenciado no Win11 + Fallback Win10)
+      // Usa captura nativa C# (/ws-capture) para o monitor/janela já selecionado no modal do StreamCord,
+      // evitando abrir o popup secundário e a barra flutuante do navegador.
       const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto);
+      ensureFallbackCanvas();
+      const wsUrl = `${wsProto}//${window.location.host}/ws-capture?source=${encodeURIComponent(
+        state.selectedSourceId
+      )}&height=${resSpec.heightNum}&fps=${cfg.fps}&detail=${cfg.preset === 'detail' ? 1 : 0}`;
 
-      if (gpuCapture.stream) {
-        state.localScreenStream = gpuCapture.stream;
-        const vTrack = gpuCapture.stream.getVideoTracks()[0];
-        if (vTrack) {
-          try { vTrack.contentHint = cfg.preset === 'detail' ? 'detail' : 'motion'; } catch (e) {}
-          vTrack.onended = () => stopScreenShare(true);
-        }
-      } else {
-        ensureFallbackCanvas();
-        const wsUrl = `${wsProto}//${window.location.host}/ws-capture?source=${encodeURIComponent(
-          state.selectedSourceId
-        )}&height=${resSpec.heightNum}&fps=${cfg.fps}&detail=0`;
+      const capWs = new WebSocket(wsUrl);
+      capWs.binaryType = 'blob';
+      state.localCaptureWs = capWs;
 
-        const capWs = new WebSocket(wsUrl);
-        capWs.binaryType = 'blob';
-        state.localCaptureWs = capWs;
+      capWs.onmessage = async (ev) => {
+        if (!state.isStreaming) return;
+        state.nextFrameBlob = ev.data;
+        state.bytesTransferredThisSec += ev.data.size;
+        if (state.decodingFrame) return;
 
-        capWs.onmessage = async (ev) => {
-          if (!state.isStreaming) return;
-          state.nextFrameBlob = ev.data;
-          state.bytesTransferredThisSec += ev.data.size;
-          if (state.decodingFrame) return;
-
-          state.decodingFrame = true;
-          try {
-            while (state.nextFrameBlob && state.isStreaming) {
-              const blob = state.nextFrameBlob;
-              state.nextFrameBlob = null;
-              const bmp = await createImageBitmap(blob);
-              if (state.captureCanvas.width !== bmp.width || state.captureCanvas.height !== bmp.height) {
-                state.captureCanvas.width = bmp.width;
-                state.captureCanvas.height = bmp.height;
-              }
-              state.captureCtx.drawImage(bmp, 0, 0);
-              bmp.close();
-              state.framesCapturedCount++;
+        state.decodingFrame = true;
+        try {
+          while (state.nextFrameBlob && state.isStreaming) {
+            const blob = state.nextFrameBlob;
+            state.nextFrameBlob = null;
+            const bmp = await createImageBitmap(blob);
+            if (state.captureCanvas.width !== bmp.width || state.captureCanvas.height !== bmp.height) {
+              state.captureCanvas.width = bmp.width;
+              state.captureCanvas.height = bmp.height;
             }
-          } catch (e) {
-          } finally {
-            state.decodingFrame = false;
+            state.captureCtx.drawImage(bmp, 0, 0);
+            bmp.close();
+            state.framesCapturedCount++;
           }
-        };
-
-        state.localScreenStream = state.captureCanvas.captureStream(cfg.fps);
-        const cvTrack = state.localScreenStream.getVideoTracks()[0];
-        if (cvTrack) {
-          try { cvTrack.contentHint = cfg.preset === 'detail' ? 'detail' : 'motion'; } catch (e) {}
+        } catch (e) {
+        } finally {
+          state.decodingFrame = false;
         }
+      };
+
+      state.localScreenStream = state.captureCanvas.captureStream(cfg.fps);
+      const cvTrack = state.localScreenStream.getVideoTracks()[0];
+      if (cvTrack) {
+        try { cvTrack.contentHint = cfg.preset === 'detail' ? 'detail' : 'motion'; } catch (e) {}
       }
 
       if (sysAudioTrack) {
@@ -2362,7 +2357,6 @@
       item.className = `channel-item ${isCurrent ? 'active' : ''}`;
       item.innerHTML = `
         <div class="channel-name-wrap"><span>${ch.name}</span></div>
-        <span class="channel-bitrate-tag">${ch.bitrate}</span>
       `;
       item.onclick = () => switchChannel(ch.id);
       block.appendChild(item);
@@ -2445,13 +2439,13 @@
     els.localAvatar.style.backgroundColor = state.avatarColor;
     els.inputProfileName.value = state.username;
     els.inputRoomCode.value = state.roomCode;
-    els.sidebarRoomCode.textContent = state.roomCode;
+    if (els.sidebarRoomCode) els.sidebarRoomCode.textContent = state.roomCode;
     if (els.headerRoomLabel) els.headerRoomLabel.textContent = state.roomCode;
     if (els.mobileModalRoom) els.mobileModalRoom.textContent = state.roomCode;
 
     const resLabel = RESOLUTION_MAP[state.streamSettings.resolution]?.label || '1080p';
-    els.localQualityTag.textContent = `${resLabel} @ ${state.streamSettings.fps}fps • Discord Mudo`;
-    els.activePresetPill.textContent = `H.264 GPU • ${resLabel.toUpperCase()} • ${state.streamSettings.fps} FPS`;
+    if (els.localQualityTag) els.localQualityTag.textContent = `${resLabel} @ ${state.streamSettings.fps}fps`;
+    if (els.activePresetPill) els.activePresetPill.textContent = `H.264 GPU • ${resLabel.toUpperCase()} • ${state.streamSettings.fps} FPS`;
   }
 
   function updateStreamControlsUI() {
@@ -2677,15 +2671,18 @@
   // 11. EVENTOS GERAIS
   // =========================================================================
   function syncStreamModalControls() {
-    document.querySelectorAll('#resolution-group .seg-btn').forEach((b) => {
-      b.classList.toggle('active', b.dataset.res === state.streamSettings.resolution);
-    });
-    document.querySelectorAll('#fps-group .seg-btn').forEach((b) => {
-      b.classList.toggle('active', Number(b.dataset.fps) === state.streamSettings.fps);
-    });
-    document.querySelectorAll('.preset-card').forEach((c) => {
-      c.classList.toggle('active', c.dataset.preset === state.streamSettings.preset);
-    });
+    if (els.resolutionSelect) {
+      els.resolutionSelect.value = state.streamSettings.resolution;
+    }
+    if (els.fpsSelect) {
+      els.fpsSelect.value = String(state.streamSettings.fps);
+    }
+    if (els.presetSelect) {
+      els.presetSelect.value = state.streamSettings.preset;
+    }
+    if (els.audioModeSelect) {
+      els.audioModeSelect.value = state.streamSettings.audioMode;
+    }
     if (els.bitrateSlider) {
       els.bitrateSlider.value = String(state.streamSettings.bitrateKbps);
     }
@@ -2714,7 +2711,7 @@
   els.btnShareScreen.onclick = handleShareButtonClick;
   els.dockBtnShare.onclick = handleShareButtonClick;
   els.btnStreamSettings.onclick = openStreamPickerModal;
-  els.dockBtnQuality.onclick = openStreamPickerModal;
+  if (els.dockBtnQuality) els.dockBtnQuality.onclick = openStreamPickerModal;
   els.btnCloseStreamModal.onclick = () => els.streamModal.classList.add('hidden');
   els.btnCancelStream.onclick = () => els.streamModal.classList.add('hidden');
 
@@ -2798,38 +2795,32 @@
     };
   }
 
-  document.querySelectorAll('.preset-card').forEach((card) => {
-    card.onclick = () => {
-      document.querySelectorAll('.preset-card').forEach((c) => c.classList.remove('active'));
-      card.classList.add('active');
-      state.streamSettings.preset = card.dataset.preset;
+  if (els.presetSelect) {
+    els.presetSelect.onchange = () => {
+      state.streamSettings.preset = els.presetSelect.value;
       localStorage.setItem('streamcord_preset', state.streamSettings.preset);
       updateLocalProfileUI();
       saveProfileToServer();
     };
-  });
+  }
 
-  document.querySelectorAll('#resolution-group .seg-btn').forEach((btn) => {
-    btn.onclick = () => {
-      document.querySelectorAll('#resolution-group .seg-btn').forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.streamSettings.resolution = btn.dataset.res;
+  if (els.resolutionSelect) {
+    els.resolutionSelect.onchange = () => {
+      state.streamSettings.resolution = els.resolutionSelect.value;
       localStorage.setItem('streamcord_res', state.streamSettings.resolution);
       updateLocalProfileUI();
       saveProfileToServer();
     };
-  });
+  }
 
-  document.querySelectorAll('#fps-group .seg-btn').forEach((btn) => {
-    btn.onclick = () => {
-      document.querySelectorAll('#fps-group .seg-btn').forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.streamSettings.fps = Number(btn.dataset.fps);
+  if (els.fpsSelect) {
+    els.fpsSelect.onchange = () => {
+      state.streamSettings.fps = Number(els.fpsSelect.value);
       localStorage.setItem('streamcord_fps', String(state.streamSettings.fps));
       updateLocalProfileUI();
       saveProfileToServer();
     };
-  });
+  }
 
   els.bitrateSlider.oninput = () => {
     const kbps = Number(els.bitrateSlider.value);
@@ -2924,19 +2915,23 @@
   els.btnInviteModal.onclick = openInviteModal;
   els.btnHeaderInvite.onclick = openInviteModal;
   els.btnEditProfile.onclick = openInviteModal;
-  els.btnRoomBanner.onclick = (e) => {
-    if (e.target === els.btnQuickCopyCode) return;
-    openInviteModal();
-  };
+  if (els.btnRoomBanner) {
+    els.btnRoomBanner.onclick = (e) => {
+      if (e.target === els.btnQuickCopyCode) return;
+      openInviteModal();
+    };
+  }
 
-  els.btnQuickCopyCode.onclick = (e) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(state.roomCode);
-    playDiscordSound('click');
-    els.btnQuickCopyCode.textContent = 'Copiado!';
-    showToast(`Código da sala ${state.roomCode} copiado!`, '🔗');
-    setTimeout(() => (els.btnQuickCopyCode.textContent = 'Copiar'), 1500);
-  };
+  if (els.btnQuickCopyCode) {
+    els.btnQuickCopyCode.onclick = (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(state.roomCode);
+      playDiscordSound('click');
+      els.btnQuickCopyCode.textContent = 'Copiado!';
+      showToast(`Código da sala ${state.roomCode} copiado!`, '🔗');
+      setTimeout(() => (els.btnQuickCopyCode.textContent = 'Copiar'), 1500);
+    };
+  }
 
   els.btnCloseInviteModal.onclick = () => els.inviteModal.classList.add('hidden');
 
