@@ -1,14 +1,15 @@
-# 🎮 StreamCord 2K60 (v9.3.0) — Transmissão de Tela 2K 60FPS + Áudio (Discord Silenciado)
+# 🎮 StreamCord 2K60 (v9.3.1) — Transmissão de Tela 2K 60FPS + Áudio (Discord Silenciado)
 
 Aplicativo nativo independente (com sua própria engine dedicada, idêntica à do Discord) para compartilhamento de tela em **até 2K (2560×1440) a 60 FPS cravados** acelerado por **Hardware GPU (NVENC / AMF / QuickSync High Profile)** com WebRTC `maintain-framerate`, áudio estéreo do PC/Jogo (192 kbps) e **voz do Discord 100% silenciada na stream** — sem precisar de VPN (Radmin/ZeroTier) e sem abrir portas no roteador!
 
 ---
 
-## ⚡ Novidades da Versão 9.3.0
+## ⚡ Novidades da Versão 9.3.1
+- **Correção do Auto-Updater e Instalador (Sem Loop de Versão):** Sincronizada a versão interna do motor C# (`CURRENT_VERSION = 9.3.1`) e da interface para que o botão **"Atualizar App"** e o instalador reconheçam imediatamente a versão instalada sem repetir o aviso de atualização.
 - **App 100% Independente de Navegador (Engine Nativa Embutida):** O StreamCord agora roda em sua própria janela nativa com motor embutido de alta performance DirectX 11, sem abrir janelas externas de navegadores (Edge/Chrome) e sem a barra de URL ou erros como `ERR_CONNECTION_REFUSED`.
 - **60 FPS Cravados em Jogos Pesados (Deadlock, CS2, etc.):** O pipeline WebRTC agora aplica explicitamente `degradationPreference: maintain-framerate`, priorizando a fluidez dos 60 quadros por segundo mesmo durante teamfights e cenas com efeitos visuais intensos.
 - **Inicialização Instantânea:** O motor C# valida a prontidão do socket local antes de carregar o DOM, eliminando telas de espera no boot.
-- **Perfil e Dados 100% Persistentes:** Nome de usuário, avatar, tema, sala e configurações de stream salvos de forma permanente em `%LOCALAPPDATA%\StreamCord\EngineProfile`.
+- **Perfil e Dados 100% Persistentes:** Nome de usuário, avatar, tema, sala e configurações de stream salvos de forma permanente em `%APPDATA%\StreamCord\profile.json` e `%LOCALAPPDATA%\StreamCord\EngineProfile`.
 
 ---
 
