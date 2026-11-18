@@ -93,6 +93,12 @@
                 <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
               </svg>
             </button>
+            <button class="icon-btn danger-icon" id="btn-disconnect-call" title="Desconectar da Chamada">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/>
+                <line x1="23" y1="1" x2="1" y2="23"/>
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -542,10 +548,11 @@
       </header>
       <div class="modal-body">
         <div class="form-section">
-          <label class="section-label">SEU APELIDO NA SALA</label>
+          <label class="section-label">SEU APELIDO E COR DO CARD</label>
           <div class="invite-row">
             <input type="text" id="input-profile-name" class="discord-input" placeholder="Digite seu nome..." />
           </div>
+          <div class="avatar-color-picker" id="avatar-color-picker"></div>
         </div>
 
         <div class="form-section">
@@ -584,6 +591,50 @@
       </div>
     </div>
   </div>
+
+  <!-- MODAL 6: GERENCIADOR DE CANAIS E MODERAÇÃO DO SERVIDOR -->
+  <div class="modal-backdrop hidden" id="channel-manager-modal">
+    <div class="discord-modal">
+      <header class="modal-header">
+        <div>
+          <h2>⚙️ Gerenciar Canais e Servidor</h2>
+          <p>Crie, renomeie ou exclua canais da sala e gerencie usuários banidos.</p>
+        </div>
+        <button class="icon-btn" id="btn-close-channel-manager">✕</button>
+      </header>
+      <div class="modal-body">
+        <div class="form-section">
+          <label class="section-label">CRIAR NOVO CANAL</label>
+          <div class="invite-row">
+            <select id="new-channel-emoji" class="discord-select" style="width:76px;flex-shrink:0;">
+              <option value="🎮">🎮</option>
+              <option value="🎬">🎬</option>
+              <option value="💻">💻</option>
+              <option value="🛋️">🛋️</option>
+              <option value="🎵">🎵</option>
+              <option value="🔥">🔥</option>
+              <option value="🎙️">🎙️</option>
+            </select>
+            <input type="text" id="new-channel-name" class="discord-input" placeholder="Nome do canal (ex: Arena FPS)..." maxlength="36" />
+            <button type="button" class="btn-go-live" id="btn-create-channel">Criar</button>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <label class="section-label">CANAIS ATUAIS</label>
+          <div class="channel-manager-list" id="channel-manager-list"></div>
+        </div>
+
+        <div class="form-section">
+          <label class="section-label">USUÁRIOS BANIDOS DA SALA</label>
+          <div class="banned-users-list" id="banned-users-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MENU DE CONTEXTO NATIVO (BOTÃO DIREITO ESTILO DISCORD) -->
+  <div class="discord-context-menu hidden" id="discord-context-menu"></div>
 
   <script src="app.js"></script>
 </body>
