@@ -1,6 +1,6 @@
 // StreamCord v9.3.1 — Motor Nativo Embutido (Zero Navegador) + 60 FPS Cravados em Jogos (maintain-framerate) + Auto-Updater Corrigido
 (() => {
-  const APP_VERSION = '9.4.0';
+  const APP_VERSION = '9.4.1';
 
   const RTC_CONFIG = {
     iceServers: [
