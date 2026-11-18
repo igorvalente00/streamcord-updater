@@ -208,72 +208,15 @@
 
       <div class="stage-body" id="stage-body">
         <div class="active-stage-layout" id="active-stage">
-          <!-- Player Principal -->
+          <!-- Player Principal / Grade Multi-Stream (1, 2, 3 ou 4+ streams ao mesmo tempo!) -->
           <div class="spotlight-wrapper hidden" id="spotlight-wrapper">
-            <div class="video-viewport" id="spotlight-viewport">
-              <div class="video-zoom-container" id="video-zoom-container">
-                <video id="spotlight-video" autoplay muted playsinline></video>
-                <audio id="remote-stream-audio" autoplay></audio>
-                <canvas id="spotlight-canvas" class="backup-canvas hidden"></canvas>
-              </div>
-
-              <!-- Camada de Emojis / Reações Flutuantes Ao Vivo -->
-              <div class="floating-reactions-layer" id="floating-reactions-layer"></div>
-
-              <!-- Banner de Desbloqueio de Áudio (Caso o navegador bloqueie autoplay com som antes do 1º clique) -->
-              <button type="button" class="mobile-unmute-banner hidden" id="btn-mobile-unmute">
-                🔊 Clique aqui (ou em qualquer lugar) para ativar o Som da Transmissão
-              </button>
-
-              <!-- Banner de Status de Conexão para Espectadores (Nunca mostra tela preta vazia) -->
-              <div class="viewer-status-overlay hidden" id="viewer-status-overlay">
-                <div class="viewer-status-box">
-                  <div class="viewer-status-spinner"></div>
-                  <p id="viewer-status-text">⏳ Conectando à transmissão...</p>
-                  <button type="button" class="overlay-btn" id="btn-viewer-retry">🔄 Tentar Reconectar</button>
-                </div>
-              </div>
-
-              <!-- Banner de Economia de GPU quando VOCÊ está transmitindo (Igual ao Discord!) -->
-              <div class="self-preview-saver hidden" id="self-preview-saver">
-                <div class="saver-box">
-                  <div class="saver-badge">⚡ MODO ALTA PERFORMANCE ATIVO (60 FPS)</div>
-                  <h3>Você está transmitindo sua tela com áudio (Discord Silenciado)</h3>
-                  <p>Para não consumir sua Placa de Vídeo nem derrubar o FPS do seu jogo, a prévia da sua própria tela fica oculta por padrão (exatamente como no Discord).</p>
-                  <button type="button" class="btn-go-live" id="btn-toggle-self-preview">👁️ Mostrar Minha Prévia Mesmo Assim</button>
-                </div>
-              </div>
-
-              <div class="stream-overlay-top" id="stream-overlay-top">
-                <div class="streamer-tag">
-                  <span class="live-badge">AO VIVO</span>
-                  <span id="spotlight-streamer-name">Transmissão</span>
-                </div>
-                <div class="stream-specs-badges">
-                  <span class="spec-badge" id="spotlight-audio-badge">🔊 Áudio PC (Discord Mudo)</span>
-                  <span class="spec-badge" id="spotlight-res-badge">1080p</span>
-                  <span class="spec-badge" id="spotlight-fps-badge">60 FPS</span>
-                  <span class="spec-badge" id="spotlight-bitrate-badge">-- Mbps</span>
-                </div>
-              </div>
-
-              <div class="stream-overlay-bottom" id="stream-overlay-bottom">
-                <div class="stream-volume-group">
-                  <button type="button" class="icon-btn-mini" id="btn-mute-toggle" title="Mutar/Desmutar Reprodução">🔊</button>
-                  <input type="range" id="spotlight-volume" min="0" max="100" value="100" title="Volume do Áudio da Transmissão" />
-                  <span id="spotlight-volume-label">100%</span>
-                </div>
-
-                <div class="stream-view-controls">
-                  <button class="overlay-btn hidden" id="btn-hide-self-preview">🙈 Ocultar Prévia (+FPS)</button>
-                  <button class="overlay-btn" id="btn-zoom-cycle" title="Zoom na Transmissão (100% / 150% / 200%)">🔍 100%</button>
-                  <button class="overlay-btn" id="btn-pip-mode" title="Janela Flutuante Picture-in-Picture">📺 PiP</button>
-                  <button class="overlay-btn" id="btn-reconnect-stream" title="Sincronizar / Reconectar Transmissão">🔄 Reconectar</button>
-                  <button class="overlay-btn" id="btn-fit-mode">Ajustar</button>
-                  <button class="overlay-btn" id="btn-fullscreen">Tela Cheia</button>
-                </div>
-              </div>
-            </div>
+            <div class="multi-stream-grid" id="multi-stream-grid" data-streams="1"></div>
+            <!-- Camada de Emojis / Reações Flutuantes Ao Vivo -->
+            <div class="floating-reactions-layer" id="floating-reactions-layer"></div>
+            <!-- Banner de Desbloqueio de Áudio Global -->
+            <button type="button" class="mobile-unmute-banner hidden" id="btn-mobile-unmute">
+              🔊 Clique aqui (ou em qualquer lugar) para ativar o Som das Transmissões
+            </button>
           </div>
 
           <!-- Painel de Telemetria em Tempo Real -->
@@ -305,7 +248,7 @@
               </div>
               <div class="hud-item">
                 <span class="hud-label">Versão do App</span>
-                <span class="hud-val" id="stat-loss">v9.6.0</span>
+                <span class="hud-val" id="stat-loss">v9.7.0</span>
               </div>
             </div>
           </div>
@@ -331,8 +274,8 @@
               <button type="button" class="react-btn" data-emoji="👏">👏</button>
               <button type="button" class="react-btn" data-emoji="❤️">❤️</button>
             </div>
-            <button class="dock-btn danger-leave hidden" id="dock-btn-leave" title="Fechar Visualização">
-              <span>Fechar Stream</span>
+            <button class="dock-btn danger-leave hidden" id="dock-btn-leave" title="Fechar Todas as Streams Abertas">
+              <span id="dock-leave-label">Fechar Stream</span>
             </button>
           </div>
         </div>

@@ -1073,18 +1073,101 @@ body {
   position: relative;
 }
 
-/* Spotlight Video Player (Tela Principal) */
+/* Spotlight / Multi-Stream Video Grid (1, 2, 3 ou 4+ streams ao mesmo tempo!) */
 .spotlight-wrapper {
   flex: 1;
   min-height: 0;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
+  position: relative;
+}
+
+.multi-stream-grid {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.multi-stream-grid[data-streams="1"] {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+
+.multi-stream-grid[data-streams="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: 1fr;
+}
+
+.multi-stream-grid[data-streams="3"],
+.multi-stream-grid[data-streams="4"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.multi-stream-grid[data-streams="many"] {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-auto-rows: minmax(200px, 1fr);
+}
+
+.multi-stream-grid[data-streams="2"] .stream-overlay-bottom,
+.multi-stream-grid[data-streams="3"] .stream-overlay-bottom,
+.multi-stream-grid[data-streams="4"] .stream-overlay-bottom,
+.multi-stream-grid[data-streams="many"] .stream-overlay-bottom {
+  padding: 8px 10px;
+}
+
+.multi-stream-grid[data-streams="2"] .overlay-btn,
+.multi-stream-grid[data-streams="3"] .overlay-btn,
+.multi-stream-grid[data-streams="4"] .overlay-btn,
+.multi-stream-grid[data-streams="many"] .overlay-btn {
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.multi-stream-grid[data-streams="2"] .stream-volume-group input[type="range"],
+.multi-stream-grid[data-streams="3"] .stream-volume-group input[type="range"],
+.multi-stream-grid[data-streams="4"] .stream-volume-group input[type="range"],
+.multi-stream-grid[data-streams="many"] .stream-volume-group input[type="range"] {
+  width: 62px;
+}
+
+.overlay-btn.close-stream-btn {
+  background: rgba(242, 63, 67, 0.85);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.overlay-btn.close-stream-btn:hover {
+  background: var(--status-red);
+}
+
+.overlay-btn.focus-active {
+  background: var(--brand-blurple);
+}
+
+.participant-tile.streaming-tile.is-watched-tile {
+  border-color: var(--status-green);
+  box-shadow: 0 0 18px rgba(35, 165, 90, 0.35);
+}
+
+@media (max-width: 900px) {
+  .multi-stream-grid[data-streams="2"],
+  .multi-stream-grid[data-streams="3"],
+  .multi-stream-grid[data-streams="4"],
+  .multi-stream-grid[data-streams="many"] {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    grid-auto-rows: minmax(210px, 1fr);
+    overflow-y: auto;
+  }
 }
 
 .video-viewport {
   width: 100%;
   height: 100%;
+  min-height: 0;
   background-color: #000;
   border-radius: var(--card-radius);
   position: relative;

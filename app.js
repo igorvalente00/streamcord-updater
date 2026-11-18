@@ -1,6 +1,6 @@
-// StreamCord v9.6.0 — Motor Híbrido GPU Zero-Copy + EcoQoS Tree Shield + Áudio WASAPI Zero-GC
+// StreamCord v9.7.0 — Multi-Stream Simultânea + P2P Bidirecional Blindado + GPU Zero-Copy
 (() => {
-  const APP_VERSION = '9.6.0';
+  const APP_VERSION = '9.7.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const RTC_CONFIG = {
@@ -11,7 +11,8 @@
       { urls: 'stun:stun.cloudflare.com:3478' },
     ],
     bundlePolicy: 'max-bundle',
-    iceCandidatePoolSize: 4,
+    rtcpMuxPolicy: 'require',
+    iceCandidatePoolSize: 6,
   };
 
   const DEFAULT_CHANNELS = [
@@ -178,17 +179,14 @@
       audioMode: localStorage.getItem('streamcord_audio') || 'pc_no_discord',
     },
 
-    // Conexões WebRTC Dedicadas
+    // Conexões WebRTC Dedicadas (Multi-Stream Simultânea!)
     screenOutPcs: new Map(),
-    screenInEntry: null,
+    watchedStreams: new Map(),
+    focusedStreamerId: null,
     earlyIceBySession: new Map(),
-    webrtcVideoActive: false,
-    watchRetryTimer: null,
     activeFallbackViewers: new Set(),
     fallbackSenderTimer: null,
 
-    spotlightPeerId: null,
-    zoomLevel: 1,
     unreadChatCount: 0,
     mobileActiveTab: 'stage',
 
@@ -458,29 +456,9 @@
     activePresetPill: document.getElementById('active-preset-pill'),
     activeStage: document.getElementById('active-stage'),
     spotlightWrapper: document.getElementById('spotlight-wrapper'),
-    spotlightViewport: document.getElementById('spotlight-viewport'),
-    videoZoomContainer: document.getElementById('video-zoom-container'),
-    spotlightVideo: document.getElementById('spotlight-video'),
-    remoteStreamAudio: document.getElementById('remote-stream-audio'),
-    spotlightCanvas: document.getElementById('spotlight-canvas'),
+    multiStreamGrid: document.getElementById('multi-stream-grid'),
     floatingReactionsLayer: document.getElementById('floating-reactions-layer'),
     btnMobileUnmute: document.getElementById('btn-mobile-unmute'),
-    selfPreviewSaver: document.getElementById('self-preview-saver'),
-    viewerStatusOverlay: document.getElementById('viewer-status-overlay'),
-    viewerStatusText: document.getElementById('viewer-status-text'),
-    btnViewerRetry: document.getElementById('btn-viewer-retry'),
-    btnToggleSelfPreview: document.getElementById('btn-toggle-self-preview'),
-    btnHideSelfPreview: document.getElementById('btn-hide-self-preview'),
-    spotlightStreamerName: document.getElementById('spotlight-streamer-name'),
-    spotlightAudioBadge: document.getElementById('spotlight-audio-badge'),
-    spotlightResBadge: document.getElementById('spotlight-res-badge'),
-    spotlightFpsBadge: document.getElementById('spotlight-fps-badge'),
-    spotlightBitrateBadge: document.getElementById('spotlight-bitrate-badge'),
-    spotlightVolume: document.getElementById('spotlight-volume'),
-    spotlightVolumeLabel: document.getElementById('spotlight-volume-label'),
-    btnMuteToggle: document.getElementById('btn-mute-toggle'),
-    btnZoomCycle: document.getElementById('btn-zoom-cycle'),
-    btnPipMode: document.getElementById('btn-pip-mode'),
     participantsGrid: document.getElementById('participants-grid'),
 
     btnShareScreen: document.getElementById('btn-share-screen'),
@@ -491,6 +469,7 @@
     dockBtnQuality: document.getElementById('dock-btn-quality'),
     dockBtnThemes: document.getElementById('dock-btn-themes'),
     dockBtnLeave: document.getElementById('dock-btn-leave'),
+    dockLeaveLabel: document.getElementById('dock-leave-label'),
 
     btnHeaderUpdate: document.getElementById('btn-header-update'),
     updateBtnLabel: document.getElementById('update-btn-label'),
@@ -568,7 +547,6 @@
     btnCopyPsInstall: document.getElementById('btn-copy-ps-install'),
     btnCopyInvitePage: document.getElementById('btn-copy-invite-page'),
     btnCopyWebDirect: document.getElementById('btn-copy-web-direct'),
-    btnReconnectStream: document.getElementById('btn-reconnect-stream'),
 
     btnToggleSfx: document.getElementById('btn-toggle-sfx'),
     sfxIconLabel: document.getElementById('sfx-icon-label'),
@@ -907,7 +885,7 @@
       if (uid !== state.clientId && now - (u.lastSeen || 0) > 10500) {
         state.onlineUsers.delete(uid);
         closeScreenOutPc(uid);
-        if (state.spotlightPeerId === uid) closeSpotlight();
+        if (state.watchedStreams.has(uid)) closeWatchedStream(uid);
       }
     }
     renderChannelsSidebar();
@@ -921,7 +899,7 @@
         if (uid && uid !== state.clientId) {
           state.onlineUsers.delete(uid);
           closeScreenOutPc(uid);
-          if (state.spotlightPeerId === uid) closeSpotlight();
+          if (state.watchedStreams.has(uid)) closeWatchedStream(uid);
           renderChannelsSidebar();
           renderStageParticipants();
         }
@@ -961,8 +939,8 @@
         ) {
           playDiscordSound('stream-start');
           showToast(`${u.username} iniciou uma transmissão ao vivo!`, '🔴');
-        } else if (state.spotlightPeerId === u.id && (!u.streaming || u.channelId !== state.currentChannelId)) {
-          closeSpotlight();
+        } else if (state.watchedStreams.has(u.id) && (!u.streaming || u.channelId !== state.currentChannelId)) {
+          closeWatchedStream(u.id);
         }
 
         renderChannelsSidebar();
@@ -971,22 +949,41 @@
       }
 
       case 'watch-request': {
-        if (state.isStreaming && state.localScreenStream) {
-          const entry = state.screenOutPcs.get(msg.senderId);
-          const connected = entry && (entry.pc.connectionState === 'connected' || entry.pc.iceConnectionState === 'connected' || entry.pc.iceConnectionState === 'completed');
-          // Evita derrubar negociação ativa já conectada ou recente (<6s).
-          if (!msg.retry || !entry || (!connected && Date.now() - entry.createdAt >= 6000)) {
-            await startScreenOutPcForViewer(msg.senderId, Boolean(msg.force));
-          }
+        if (!state.isStreaming || !state.localScreenStream) {
+          publishDirect(msg.senderId, {
+            type: 'stream-error',
+            reason: 'Transmissão ainda está iniciando ou foi encerrada.',
+          });
+          break;
+        }
+        const entry = state.screenOutPcs.get(msg.senderId);
+        const connected = entry && (entry.pc.connectionState === 'connected' || entry.pc.iceConnectionState === 'connected' || entry.pc.iceConnectionState === 'completed');
+        if (!msg.retry || !entry || msg.force || (!connected && Date.now() - entry.createdAt >= 6000)) {
+          publishDirect(msg.senderId, { type: 'watch-ack', channelId: state.currentChannelId });
+          await startScreenOutPcForViewer(msg.senderId, Boolean(msg.force), false, msg.channelId || null);
+        }
+        break;
+      }
+
+      case 'watch-ack': {
+        const ws = state.watchedStreams.get(msg.senderId);
+        if (ws && !ws.offerReceived && !ws.webrtcVideoActive) {
+          const u = state.onlineUsers.get(msg.senderId);
+          setStreamCardStatus(ws, `📡 Pedido recebido por ${u ? u.username : 'Amigo'}, gerando oferta P2P...`);
+        }
+        break;
+      }
+
+      case 'stream-error': {
+        const ws = state.watchedStreams.get(msg.senderId);
+        if (ws && !ws.webrtcVideoActive) {
+          setStreamCardStatus(ws, `⚠️ ${msg.reason || 'Não foi possível iniciar a transmissão.'}`, true);
         }
         break;
       }
 
       case 'screen-offer': {
-        if (
-          !state.isStreaming &&
-          state.spotlightPeerId === msg.senderId
-        ) {
+        if (state.watchedStreams.has(msg.senderId)) {
           await handleIncomingScreenOffer(msg.senderId, msg.sdp, msg.sessionId);
         }
         break;
@@ -1014,17 +1011,19 @@
 
       case 'screen-ice': {
         if (msg.role === 'from-streamer' && msg.candidate) {
+          const ws = state.watchedStreams.get(msg.senderId);
+          const inEntry = ws?.inEntry;
           if (
-            state.screenInEntry &&
-            state.screenInEntry.streamerId === msg.senderId &&
-            (!msg.sessionId || state.screenInEntry.sessionId === msg.sessionId)
+            inEntry &&
+            inEntry.streamerId === msg.senderId &&
+            (!msg.sessionId || inEntry.sessionId === msg.sessionId)
           ) {
-            if (state.screenInEntry.remoteDescSet) {
+            if (inEntry.remoteDescSet) {
               try {
-                await state.screenInEntry.pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+                await inEntry.pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
               } catch (e) {}
             } else {
-              state.screenInEntry.pendingCandidates.push(msg.candidate);
+              inEntry.pendingCandidates.push(msg.candidate);
             }
           } else if (msg.sessionId) {
             if (!state.earlyIceBySession.has(msg.sessionId)) {
@@ -1073,7 +1072,7 @@
           showToast(`Você foi expulso da chamada por ${msg.by || 'um moderador'}.`, '👢');
         } else if (msg.action === 'ban') {
           stopScreenShare(false);
-          closeSpotlight();
+          closeAllWatchedStreams();
           state.currentChannelId = null;
           state.bannedFromRooms.add(state.roomCode);
           if (state.cloudMqtt) {
@@ -1666,7 +1665,6 @@
       state.localScreenStream = await startLegacyCsharpCapture(cfg, resSpec, wsProto);
     }
 
-    if (state.spotlightPeerId) closeSpotlight();
     state.isStreaming = true;
     document.body.classList.add('is-streaming-local');
     state.showSelfPreview = isMobileDevice;
@@ -1682,7 +1680,9 @@
 
     announcePresence(false);
     updateStreamControlsUI();
-    openSpotlight(state.clientId);
+    if (state.watchedStreams.size === 0 || state.watchedStreams.has(state.clientId)) {
+      openSelfPreviewCard();
+    }
   }
 
   function stopScreenShare(notify = true) {
@@ -1719,8 +1719,8 @@
     }
     state.screenOutPcs.clear();
 
-    if (state.spotlightPeerId === state.clientId) {
-      closeSpotlight();
+    if (state.watchedStreams.has(state.clientId)) {
+      closeWatchedStream(state.clientId, false);
     }
     if (notify) {
       if (wasStreaming) {
@@ -1870,9 +1870,22 @@
     }
   }
 
-  async function startScreenOutPcForViewer(viewerId, forceRecreate = false, forceAlt = false) {
-    if (!state.isStreaming || !state.localScreenStream || viewerId === state.clientId ||
-        state.onlineUsers.get(viewerId)?.channelId !== state.currentChannelId) return;
+  async function startScreenOutPcForViewer(viewerId, forceRecreate = false, forceAlt = false, requestChannelId = null) {
+    if (!state.isStreaming || !state.localScreenStream || viewerId === state.clientId) return;
+
+    const viewerKnownChannel = state.onlineUsers.get(viewerId)?.channelId;
+    const viewerInChannel =
+      (requestChannelId && requestChannelId === state.currentChannelId) ||
+      viewerKnownChannel === state.currentChannelId ||
+      (!requestChannelId && !viewerKnownChannel);
+    if (!viewerInChannel) return;
+
+    const liveVideoTracks = state.localScreenStream.getVideoTracks().filter((t) => t.readyState === 'live');
+    if (liveVideoTracks.length === 0) {
+      publishDirect(viewerId, { type: 'stream-error', reason: 'A captura de vídeo foi encerrada pelo sistema.' });
+      stopScreenShare(true);
+      return;
+    }
 
     const existing = state.screenOutPcs.get(viewerId);
     if (existing && !forceRecreate) {
@@ -1919,7 +1932,7 @@
             const stats = await pc.getStats();
             const reports = [...stats.values()].filter((r) => r.type === 'outbound-rtp' && r.kind === 'video');
             if (isCurrent() && reports.length && reports.every((r) => r.framesSent === 0)) {
-              void startScreenOutPcForViewer(viewerId, true, true);
+              void startScreenOutPcForViewer(viewerId, true, true, requestChannelId);
             }
           } catch (e) {}
         }, 3200);
@@ -1948,11 +1961,15 @@
     try {
       for (const track of stream.getTracks()) {
         if (track.kind === 'video') {
-          outEntry.videoSender = pc.addTransceiver(track, {
-            direction: 'sendonly',
-            streams: [stream],
-            sendEncodings: [outEntry.desiredEncoding],
-          }).sender;
+          try {
+            outEntry.videoSender = pc.addTransceiver(track, {
+              direction: 'sendonly',
+              streams: [stream],
+              sendEncodings: [outEntry.desiredEncoding],
+            }).sender;
+          } catch (transceiverErr) {
+            outEntry.videoSender = pc.addTrack(track, stream);
+          }
         } else {
           pc.addTrack(track, stream);
         }
@@ -1984,88 +2001,407 @@
     } catch (error) {
       if (isCurrent()) {
         closeScreenOutPc(viewerId);
+        publishDirect(viewerId, {
+          type: 'stream-error',
+          reason: (error && error.message) || 'Falha ao negociar oferta WebRTC.',
+        });
         console.warn('Não foi possível abrir a transmissão para o espectador:', error);
       }
     }
   }
 
-  function setViewerStatusOverlay(text, isError = false) {
-    if (!els.viewerStatusOverlay) return;
+  function setStreamCardStatus(ws, text, isError = false) {
+    if (!ws || !ws.statusOverlayEl) return;
     if (!text) {
-      els.viewerStatusOverlay.classList.add('hidden');
-      els.viewerStatusOverlay.classList.remove('is-error');
+      ws.statusOverlayEl.classList.add('hidden');
+      ws.statusOverlayEl.classList.remove('is-error');
       return;
     }
-    if (els.viewerStatusText) els.viewerStatusText.textContent = text;
-    els.viewerStatusOverlay.classList.toggle('is-error', Boolean(isError));
-    els.viewerStatusOverlay.classList.remove('hidden');
+    if (ws.statusTextEl) ws.statusTextEl.textContent = text;
+    ws.statusOverlayEl.classList.toggle('is-error', Boolean(isError));
+    ws.statusOverlayEl.classList.remove('hidden');
+  }
+
+  function refreshMultiStreamLayout() {
+    const count = state.watchedStreams.size;
+    const hasStreams = count > 0;
+
+    if (els.spotlightWrapper) els.spotlightWrapper.classList.toggle('hidden', !hasStreams);
+    if (els.activeStage) els.activeStage.classList.toggle('spotlight-active', hasStreams);
+    if (els.dockBtnLeave) els.dockBtnLeave.classList.toggle('hidden', !hasStreams);
+    if (els.dockLeaveLabel) {
+      els.dockLeaveLabel.textContent = count > 1 ? `Fechar Streams (${count})` : 'Fechar Stream';
+    }
+    if (els.mobLiveDot) els.mobLiveDot.classList.toggle('hidden', !hasStreams);
+
+    const watchingRemote = [...state.watchedStreams.keys()].some((id) => id !== state.clientId);
+    document.body.classList.toggle('is-watching-stream', watchingRemote);
+
+    if (state.focusedStreamerId && !state.watchedStreams.has(state.focusedStreamerId)) {
+      state.focusedStreamerId = null;
+    }
+
+    const effectiveCount = state.focusedStreamerId ? 1 : count;
+    if (els.multiStreamGrid) {
+      els.multiStreamGrid.dataset.streams =
+        effectiveCount <= 1 ? '1' : effectiveCount <= 4 ? String(effectiveCount) : 'many';
+    }
+
+    for (const [sid, ws] of state.watchedStreams.entries()) {
+      if (!ws.cardEl) continue;
+      const hiddenByFocus = Boolean(state.focusedStreamerId && state.focusedStreamerId !== sid);
+      ws.cardEl.classList.toggle('hidden', hiddenByFocus);
+      if (ws.focusBtnEl) {
+        const isFocused = state.focusedStreamerId === sid;
+        ws.focusBtnEl.classList.toggle('hidden', count <= 1);
+        ws.focusBtnEl.classList.toggle('focus-active', isFocused);
+        ws.focusBtnEl.textContent = isFocused ? `⊞ Grade (${count})` : '⛶ Focar';
+      }
+    }
+  }
+
+  function createStreamViewportCard(streamerId) {
+    const isMe = streamerId === state.clientId;
+    const u = state.onlineUsers.get(streamerId);
+    const displayName = isMe ? `${state.username} (Sua Transmissão)` : `Transmissão de ${u ? u.username : 'Amigo'}`;
+
+    const card = document.createElement('div');
+    card.className = 'video-viewport touch-active';
+    card.dataset.streamerId = streamerId;
+
+    card.innerHTML = `
+      <div class="video-zoom-container">
+        <video autoplay muted playsinline></video>
+        <audio autoplay></audio>
+      </div>
+
+      <div class="viewer-status-overlay hidden">
+        <div class="viewer-status-box">
+          <div class="viewer-status-spinner"></div>
+          <p class="viewer-status-text">⏳ Conectando à transmissão...</p>
+          <button type="button" class="overlay-btn btn-card-retry">🔄 Tentar Reconectar</button>
+        </div>
+      </div>
+
+      <div class="self-preview-saver hidden">
+        <div class="saver-box">
+          <div class="saver-badge">⚡ MODO ALTA PERFORMANCE ATIVO (60 FPS)</div>
+          <h3>Você está transmitindo sua tela com áudio (Discord Silenciado)</h3>
+          <p>Para não consumir sua Placa de Vídeo nem derrubar o FPS do seu jogo, a prévia da sua própria tela fica oculta por padrão (exatamente como no Discord).</p>
+          <button type="button" class="btn-go-live btn-card-show-preview">👁️ Mostrar Minha Prévia Mesmo Assim</button>
+        </div>
+      </div>
+
+      <div class="stream-overlay-top">
+        <div class="streamer-tag">
+          <span class="live-badge">AO VIVO</span>
+          <span class="card-streamer-name">${escapeHtml(displayName)}</span>
+        </div>
+        <div class="stream-specs-badges">
+          <span class="spec-badge card-audio-badge">🔊 Áudio PC</span>
+          <span class="spec-badge card-res-badge">1080p</span>
+          <span class="spec-badge card-fps-badge">-- FPS</span>
+          <span class="spec-badge card-bitrate-badge">-- Mbps</span>
+        </div>
+      </div>
+
+      <div class="stream-overlay-bottom">
+        <div class="stream-volume-group">
+          <button type="button" class="icon-btn-mini btn-card-mute" title="Mutar/Desmutar Reprodução">${isMe ? '🔇' : '🔊'}</button>
+          <input type="range" class="card-volume-slider" min="0" max="100" value="100" title="Volume desta Transmissão" />
+          <span class="card-volume-label">100%</span>
+        </div>
+
+        <div class="stream-view-controls">
+          <button type="button" class="overlay-btn btn-card-hide-preview hidden">🙈 Ocultar Prévia</button>
+          <button type="button" class="overlay-btn btn-card-focus hidden" title="Expandir / Voltar à Grade">⛶ Focar</button>
+          <button type="button" class="overlay-btn btn-card-zoom" title="Zoom (100% / 150% / 200%)">🔍 100%</button>
+          <button type="button" class="overlay-btn btn-card-pip" title="Picture-in-Picture">📺 PiP</button>
+          <button type="button" class="overlay-btn btn-card-reconnect" title="Reconectar Stream">🔄</button>
+          <button type="button" class="overlay-btn btn-card-fit">Ajustar</button>
+          <button type="button" class="overlay-btn btn-card-full">Tela Cheia</button>
+          <button type="button" class="overlay-btn close-stream-btn btn-card-close" title="Fechar esta stream">✕</button>
+        </div>
+      </div>
+    `;
+
+    const ws = {
+      streamerId,
+      isMe,
+      cardEl: card,
+      zoomContainerEl: card.querySelector('.video-zoom-container'),
+      videoEl: card.querySelector('video'),
+      audioEl: card.querySelector('audio'),
+      statusOverlayEl: card.querySelector('.viewer-status-overlay'),
+      statusTextEl: card.querySelector('.viewer-status-text'),
+      selfPreviewSaverEl: card.querySelector('.self-preview-saver'),
+      btnShowPreviewEl: card.querySelector('.btn-card-show-preview'),
+      btnHidePreviewEl: card.querySelector('.btn-card-hide-preview'),
+      streamerNameEl: card.querySelector('.card-streamer-name'),
+      resBadgeEl: card.querySelector('.card-res-badge'),
+      fpsBadgeEl: card.querySelector('.card-fps-badge'),
+      mbpsBadgeEl: card.querySelector('.card-bitrate-badge'),
+      muteBtnEl: card.querySelector('.btn-card-mute'),
+      volumeSliderEl: card.querySelector('.card-volume-slider'),
+      volumeLabelEl: card.querySelector('.card-volume-label'),
+      focusBtnEl: card.querySelector('.btn-card-focus'),
+      zoomBtnEl: card.querySelector('.btn-card-zoom'),
+      zoomLevel: 1,
+      volume: 100,
+      muted: isMe || state.locallyMutedUsers.has(streamerId),
+      pendingAudioUnlock: false,
+      webrtcVideoActive: false,
+      offerReceived: false,
+      inEntry: null,
+      watchRetryTimer: null,
+      natWarningTimer: null,
+    };
+
+    if (isMe) {
+      card.querySelector('.stream-volume-group').classList.add('hidden');
+      card.querySelector('.btn-card-reconnect').classList.add('hidden');
+    }
+
+    let idleTimer = null;
+    const wakeHud = () => {
+      card.classList.remove('idle-cursor');
+      card.classList.add('touch-active');
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        if (state.watchedStreams.has(streamerId) && (ws.webrtcVideoActive || isMe)) {
+          card.classList.add('idle-cursor');
+          card.classList.remove('touch-active');
+        }
+      }, 2600);
+    };
+    card.addEventListener('mousemove', wakeHud);
+    card.addEventListener('touchstart', wakeHud, { passive: true });
+
+    card.querySelector('.btn-card-retry').onclick = () => watchFriendStream(streamerId, true);
+    card.querySelector('.btn-card-reconnect').onclick = () => {
+      watchFriendStream(streamerId, true);
+      showToast(`Reconectando à stream de ${u ? u.username : 'Amigo'}...`, '🔄');
+    };
+    card.querySelector('.btn-card-close').onclick = () => closeWatchedStream(streamerId);
+    ws.focusBtnEl.onclick = () => {
+      state.focusedStreamerId = state.focusedStreamerId === streamerId ? null : streamerId;
+      refreshMultiStreamLayout();
+    };
+    ws.zoomBtnEl.onclick = () => {
+      ws.zoomLevel = ws.zoomLevel === 1 ? 1.5 : ws.zoomLevel === 1.5 ? 2 : 1;
+      ws.zoomContainerEl.style.transform = `scale(${ws.zoomLevel})`;
+      ws.zoomBtnEl.textContent = `🔍 ${Math.round(ws.zoomLevel * 100)}%`;
+    };
+    card.querySelector('.btn-card-fit').onclick = () => ws.videoEl.classList.toggle('fit-cover');
+    card.querySelector('.btn-card-full').onclick = () => {
+      if (!document.fullscreenElement) {
+        if (card.requestFullscreen) card.requestFullscreen().catch(() => {});
+        else if (ws.videoEl.webkitEnterFullscreen) ws.videoEl.webkitEnterFullscreen();
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    };
+    card.querySelector('.btn-card-pip').onclick = async () => {
+      try {
+        if (document.pictureInPictureElement) await document.exitPictureInPicture();
+        else if (ws.videoEl.requestPictureInPicture) await ws.videoEl.requestPictureInPicture();
+      } catch (e) {
+        showToast('Modo Picture-in-Picture requer vídeo ativo.', '📺');
+      }
+    };
+
+    ws.volumeSliderEl.oninput = () => {
+      const v = Number(ws.volumeSliderEl.value);
+      ws.volume = v;
+      ws.muted = v === 0;
+      if (ws.audioEl) {
+        ws.audioEl.volume = v / 100;
+        ws.audioEl.muted = ws.muted;
+        if (v > 0) {
+          ws.pendingAudioUnlock = false;
+          ws.audioEl.play().catch(() => {});
+          updateGlobalUnmuteBanner();
+        }
+      }
+      ws.muteBtnEl.textContent = ws.muted ? '🔇' : '🔊';
+      ws.volumeLabelEl.textContent = `${v}%`;
+    };
+
+    ws.muteBtnEl.onclick = () => {
+      ws.muted = !ws.muted;
+      if (ws.audioEl) {
+        ws.audioEl.muted = ws.muted;
+        if (!ws.muted) {
+          ws.pendingAudioUnlock = false;
+          ws.audioEl.play().catch(() => {});
+          updateGlobalUnmuteBanner();
+        }
+      }
+      ws.muteBtnEl.textContent = ws.muted ? '🔇' : '🔊';
+    };
+
+    ws.btnShowPreviewEl.onclick = () => {
+      state.showSelfPreview = true;
+      applySelfPreviewVisibility();
+    };
+    ws.btnHidePreviewEl.onclick = () => {
+      state.showSelfPreview = false;
+      applySelfPreviewVisibility();
+    };
+
+    if (els.multiStreamGrid) els.multiStreamGrid.appendChild(card);
+    return ws;
+  }
+
+  function updateGlobalUnmuteBanner() {
+    if (!els.btnMobileUnmute) return;
+    const anyLocked = [...state.watchedStreams.values()].some((w) => w.pendingAudioUnlock);
+    els.btnMobileUnmute.classList.toggle('hidden', !anyLocked);
+  }
+
+  function ensureWatchedStreamCard(streamerId) {
+    let ws = state.watchedStreams.get(streamerId);
+    if (!ws) {
+      ws = createStreamViewportCard(streamerId);
+      state.watchedStreams.set(streamerId, ws);
+    }
+    refreshMultiStreamLayout();
+    renderStageParticipants();
+    return ws;
+  }
+
+  function openSelfPreviewCard() {
+    const ws = ensureWatchedStreamCard(state.clientId);
+    setStreamCardStatus(ws, null);
+    applySelfPreviewVisibility();
+  }
+
+  function applySelfPreviewVisibility() {
+    const ws = state.watchedStreams.get(state.clientId);
+    if (!ws) return;
+    if (state.showSelfPreview && state.localScreenStream) {
+      ws.selfPreviewSaverEl.classList.add('hidden');
+      ws.btnHidePreviewEl.classList.remove('hidden');
+      ws.videoEl.srcObject = state.localScreenStream;
+      ws.videoEl.muted = true;
+      ws.videoEl.play().catch(() => {});
+    } else {
+      ws.videoEl.srcObject = null;
+      ws.selfPreviewSaverEl.classList.remove('hidden');
+      ws.btnHidePreviewEl.classList.add('hidden');
+    }
   }
 
   function watchFriendStream(streamerId, force = false) {
-    if (state.isStreaming) return;
-    if (state.spotlightPeerId && state.spotlightPeerId !== streamerId) closeSpotlight();
-    if (force && state.screenInEntry && state.screenInEntry.pc) {
-      try { state.screenInEntry.pc.close(); } catch (e) {}
-      state.screenInEntry = null;
-    }
-    openSpotlight(streamerId);
-    setMobileTab('stage');
-
-    if (
-      !force &&
-      state.screenInEntry &&
-      state.screenInEntry.streamerId === streamerId &&
-      state.webrtcVideoActive &&
-      els.spotlightVideo.videoWidth > 0
-    ) {
-      setViewerStatusOverlay(null);
+    if (streamerId === state.clientId) {
+      openSelfPreviewCard();
+      setMobileTab('stage');
       return;
     }
 
-    state.webrtcVideoActive = false;
-    const u = state.onlineUsers.get(streamerId);
-    setViewerStatusOverlay(`⏳ Solicitando transmissão de ${u ? u.username : 'Amigo'}...`);
-    publishDirect(streamerId, { type: 'watch-request', force });
+    const existingWs = state.watchedStreams.get(streamerId);
+    if (!force && existingWs && existingWs.webrtcVideoActive && existingWs.videoEl.videoWidth > 0) {
+      if (state.watchedStreams.size > 1 && state.focusedStreamerId !== streamerId) {
+        state.focusedStreamerId = streamerId;
+        refreshMultiStreamLayout();
+      }
+      setStreamCardStatus(existingWs, null);
+      setMobileTab('stage');
+      return;
+    }
 
-    if (state.watchRetryTimer) clearInterval(state.watchRetryTimer);
-    state.watchRetryTimer = setInterval(() => {
-      if (state.spotlightPeerId !== streamerId || state.webrtcVideoActive) {
-        clearInterval(state.watchRetryTimer);
-        state.watchRetryTimer = null;
+    const ws = ensureWatchedStreamCard(streamerId);
+    setMobileTab('stage');
+
+    if (force && ws.inEntry && ws.inEntry.pc) {
+      try { ws.inEntry.pc.close(); } catch (e) {}
+      ws.inEntry = null;
+    }
+    if (ws.watchRetryTimer) {
+      clearInterval(ws.watchRetryTimer);
+      ws.watchRetryTimer = null;
+    }
+    if (ws.natWarningTimer) {
+      clearTimeout(ws.natWarningTimer);
+      ws.natWarningTimer = null;
+    }
+
+    ws.webrtcVideoActive = false;
+    ws.offerReceived = false;
+    const u = state.onlineUsers.get(streamerId);
+    setStreamCardStatus(ws, `⏳ Solicitando transmissão de ${u ? u.username : 'Amigo'}...`);
+    publishDirect(streamerId, { type: 'watch-request', channelId: state.currentChannelId, force });
+
+    ws.watchRetryTimer = setInterval(() => {
+      if (!state.watchedStreams.has(streamerId) || ws.webrtcVideoActive) {
+        clearInterval(ws.watchRetryTimer);
+        ws.watchRetryTimer = null;
         return;
       }
-      setViewerStatusOverlay('⏳ Aguardando resposta da transmissão P2P...');
-      publishDirect(streamerId, { type: 'watch-request', force: true, retry: true });
-    }, 5500);
+      // Só reenvia watch-request se ainda não recebeu oferta OU se o ICE falhou/fechou
+      const st = ws.inEntry?.pc ? (ws.inEntry.pc.connectionState || ws.inEntry.pc.iceConnectionState) : null;
+      if (!ws.offerReceived || st === 'failed' || st === 'closed' || st === 'disconnected') {
+        if (!ws.offerReceived) {
+          setStreamCardStatus(ws, `⏳ Aguardando resposta de ${u ? u.username : 'Amigo'}...`);
+        }
+        publishDirect(streamerId, {
+          type: 'watch-request',
+          channelId: state.currentChannelId,
+          force: true,
+          retry: true,
+        });
+      }
+    }, 7500);
   }
 
-  if (els.btnViewerRetry) {
-    els.btnViewerRetry.onclick = () => {
-      if (state.spotlightPeerId && state.spotlightPeerId !== state.clientId) {
-        watchFriendStream(state.spotlightPeerId, true);
-      }
-    };
+  function closeWatchedStream(streamerId, notifyStreamer = true) {
+    const ws = state.watchedStreams.get(streamerId);
+    if (!ws) return;
+    if (notifyStreamer && streamerId !== state.clientId) {
+      publishDirect(streamerId, { type: 'stop-watching' });
+    }
+    if (ws.watchRetryTimer) clearInterval(ws.watchRetryTimer);
+    if (ws.natWarningTimer) clearTimeout(ws.natWarningTimer);
+    if (ws.inEntry && ws.inEntry.pc) {
+      try { ws.inEntry.pc.close(); } catch (e) {}
+    }
+    ws.videoEl.srcObject = null;
+    if (ws.audioEl) ws.audioEl.srcObject = null;
+    if (ws.cardEl && ws.cardEl.parentNode) ws.cardEl.remove();
+    state.watchedStreams.delete(streamerId);
+    if (state.focusedStreamerId === streamerId) state.focusedStreamerId = null;
+    updateGlobalUnmuteBanner();
+    refreshMultiStreamLayout();
+    renderStageParticipants();
+  }
+
+  function closeAllWatchedStreams() {
+    for (const sid of [...state.watchedStreams.keys()]) {
+      closeWatchedStream(sid, sid !== state.clientId);
+    }
   }
 
   function unlockPendingRemoteAudio() {
-    if (!els.remoteStreamAudio || !els.remoteStreamAudio.srcObject) return;
-    const desiredVol = Number(els.spotlightVolume.value) / 100;
-    els.remoteStreamAudio.volume = desiredVol > 0 ? desiredVol : 1;
-    els.remoteStreamAudio.muted = desiredVol === 0 && !state.pendingAudioUnlock ? true : false;
-    els.remoteStreamAudio
-      .play()
-      .then(() => {
-        state.pendingAudioUnlock = false;
-        if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
-      })
-      .catch(() => {});
+    for (const ws of state.watchedStreams.values()) {
+      if (!ws.pendingAudioUnlock || !ws.audioEl || !ws.audioEl.srcObject) continue;
+      const desiredVol = ws.volume / 100;
+      ws.audioEl.volume = desiredVol > 0 ? desiredVol : 1;
+      ws.audioEl.muted = ws.muted;
+      ws.audioEl
+        .play()
+        .then(() => {
+          ws.pendingAudioUnlock = false;
+          updateGlobalUnmuteBanner();
+        })
+        .catch(() => {});
+    }
   }
 
   window.addEventListener(
     'pointerdown',
     () => {
       state.hasUserInteracted = true;
-      if (state.pendingAudioUnlock) unlockPendingRemoteAudio();
+      unlockPendingRemoteAudio();
     },
     { passive: true }
   );
@@ -2073,25 +2409,29 @@
     'keydown',
     () => {
       state.hasUserInteracted = true;
-      if (state.pendingAudioUnlock) unlockPendingRemoteAudio();
+      unlockPendingRemoteAudio();
     },
     { passive: true }
   );
 
   async function handleIncomingScreenOffer(streamerId, sdp, sessionId) {
-    if (
-      state.screenInEntry &&
-      state.screenInEntry.streamerId === streamerId &&
-      state.screenInEntry.sessionId === sessionId
-    ) {
+    const ws = state.watchedStreams.get(streamerId);
+    if (!ws) return;
+
+    if (ws.inEntry && ws.inEntry.sessionId === sessionId) {
       return;
     }
 
-    if (state.screenInEntry && state.screenInEntry.pc) {
-      try { state.screenInEntry.pc.close(); } catch (e) {}
+    if (ws.inEntry && ws.inEntry.pc) {
+      try { ws.inEntry.pc.close(); } catch (e) {}
+    }
+    if (ws.natWarningTimer) {
+      clearTimeout(ws.natWarningTimer);
+      ws.natWarningTimer = null;
     }
 
-    setViewerStatusOverlay('🔗 Negociando conexão P2P...');
+    ws.offerReceived = true;
+    setStreamCardStatus(ws, '🔗 Oferta P2P recebida, conectando...');
     const pc = new RTCPeerConnection(RTC_CONFIG);
     const earlyCandidates = (sessionId && state.earlyIceBySession.get(sessionId)) || [];
     if (sessionId) state.earlyIceBySession.delete(sessionId);
@@ -2107,26 +2447,36 @@
       remoteDescSet: false,
       pendingCandidates: [...earlyCandidates],
     };
-    state.screenInEntry = inEntry;
+    ws.inEntry = inEntry;
 
     const updateIceUi = () => {
-      if (state.screenInEntry !== inEntry || state.spotlightPeerId !== streamerId || state.webrtcVideoActive) return;
+      if (ws.inEntry !== inEntry || !state.watchedStreams.has(streamerId) || ws.webrtcVideoActive) return;
       const st = pc.connectionState || pc.iceConnectionState;
       if (st === 'checking' || st === 'connecting') {
-        setViewerStatusOverlay('🌐 Estabelecendo rota direta P2P (STUN)...');
+        setStreamCardStatus(ws, '🌐 Estabelecendo rota direta P2P (STUN)...');
+        if (!ws.natWarningTimer) {
+          ws.natWarningTimer = setTimeout(() => {
+            if (ws.inEntry === inEntry && !ws.webrtcVideoActive && state.watchedStreams.has(streamerId)) {
+              const curSt = pc.connectionState || pc.iceConnectionState;
+              if (curSt === 'checking' || curSt === 'connecting' || curSt === 'new') {
+                setStreamCardStatus(ws, '🌐 Atravessando roteador/NAT... Se demorar, peça ao amigo para liberar no Firewall ou usar a versão Web.');
+              }
+            }
+          }, 8000);
+        }
       } else if (st === 'connected' || st === 'completed') {
-        setViewerStatusOverlay('📡 P2P conectado, aguardando primeiro quadro...');
+        setStreamCardStatus(ws, '📡 P2P conectado, aguardando primeiro quadro...');
       } else if (st === 'failed' || st === 'closed') {
-        setViewerStatusOverlay('⚠️ Conexão P2P bloqueada pelo NAT/Firewall. Clique em Reconectar.', true);
+        setStreamCardStatus(ws, '⚠️ Conexão P2P bloqueada pelo NAT/Firewall. Clique em Reconectar.', true);
       } else if (st === 'disconnected') {
-        setViewerStatusOverlay('⚠️ Conexão instável, tentando restabelecer...', true);
+        setStreamCardStatus(ws, '⚠️ Conexão instável, tentando restabelecer...', true);
       }
     };
     pc.oniceconnectionstatechange = updateIceUi;
     pc.onconnectionstatechange = updateIceUi;
 
     pc.onicecandidate = ({ candidate }) => {
-      if (!candidate) return;
+      if (!candidate || ws.inEntry !== inEntry) return;
       if (inEntry.answerSent) {
         publishDirect(streamerId, {
           type: 'screen-ice',
@@ -2140,57 +2490,55 @@
     };
 
     pc.ontrack = (ev) => {
-      if (state.screenInEntry !== inEntry || state.spotlightPeerId !== streamerId) return;
-      els.spotlightCanvas.classList.add('hidden');
+      if (ws.inEntry !== inEntry || !state.watchedStreams.has(streamerId)) return;
       if (ev.track.kind === 'video') {
         if (!inEntry.remoteVideoStream.getTracks().some((t) => t.id === ev.track.id)) {
           inEntry.remoteVideoStream.addTrack(ev.track);
         }
-        // O <video> fica SEMPRE muted=true e playsInline=true (zero bloqueio de autoplay no desktop e mobile!)
-        els.spotlightVideo.playsInline = true;
-        els.spotlightVideo.autoplay = true;
-        els.spotlightVideo.muted = true;
-        if (els.spotlightVideo.srcObject !== inEntry.remoteVideoStream) {
-          els.spotlightVideo.srcObject = inEntry.remoteVideoStream;
+        ws.videoEl.playsInline = true;
+        ws.videoEl.autoplay = true;
+        ws.videoEl.muted = true;
+        if (ws.videoEl.srcObject !== inEntry.remoteVideoStream) {
+          ws.videoEl.srcObject = inEntry.remoteVideoStream;
         }
-        els.spotlightVideo.play().catch(() => {});
+        ws.videoEl.play().catch(() => {});
 
         const markVideoReady = () => {
-          if (state.spotlightPeerId !== streamerId || state.screenInEntry !== inEntry) return false;
-          if (els.spotlightVideo.videoWidth > 0 && els.spotlightVideo.readyState >= 2) {
-            state.webrtcVideoActive = true;
-            els.spotlightCanvas.classList.add('hidden');
-            setViewerStatusOverlay(null);
+          if (ws.inEntry !== inEntry || !state.watchedStreams.has(streamerId)) return false;
+          if (ws.videoEl.videoWidth > 0 && ws.videoEl.readyState >= 2) {
+            ws.webrtcVideoActive = true;
+            if (ws.natWarningTimer) {
+              clearTimeout(ws.natWarningTimer);
+              ws.natWarningTimer = null;
+            }
+            setStreamCardStatus(ws, null);
             return true;
           }
           return false;
         };
-        els.spotlightVideo.onloadeddata = markVideoReady;
-        els.spotlightVideo.onplaying = markVideoReady;
+        ws.videoEl.onloadeddata = markVideoReady;
+        ws.videoEl.onplaying = markVideoReady;
 
         const checkDecoded = setInterval(() => {
-          if (state.spotlightPeerId !== streamerId || state.screenInEntry !== inEntry || markVideoReady()) {
+          if (ws.inEntry !== inEntry || !state.watchedStreams.has(streamerId) || markVideoReady()) {
             clearInterval(checkDecoded);
           }
         }, 120);
-      } else if (ev.track.kind === 'audio' && els.remoteStreamAudio) {
-        // Trilha de áudio dedicada em <audio id="remote-stream-audio"> separado do <video>!
-        // Garante que 100% dos amigos no PC e Mobile ouçam o áudio mesmo quando a trilha chega depois do vídeo!
+      } else if (ev.track.kind === 'audio' && ws.audioEl) {
         const audioStream = new MediaStream([ev.track]);
-        els.remoteStreamAudio.srcObject = audioStream;
-        const desiredVol = Number(els.spotlightVolume.value) / 100;
-        els.remoteStreamAudio.volume = desiredVol;
-        els.remoteStreamAudio.muted = desiredVol === 0;
+        ws.audioEl.srcObject = audioStream;
+        ws.audioEl.volume = ws.volume / 100;
+        ws.audioEl.muted = ws.muted || state.locallyMutedUsers.has(streamerId);
 
-        els.remoteStreamAudio
+        ws.audioEl
           .play()
           .then(() => {
-            state.pendingAudioUnlock = false;
-            if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
+            ws.pendingAudioUnlock = false;
+            updateGlobalUnmuteBanner();
           })
           .catch(() => {
-            state.pendingAudioUnlock = true;
-            if (els.btnMobileUnmute) els.btnMobileUnmute.classList.remove('hidden');
+            ws.pendingAudioUnlock = true;
+            updateGlobalUnmuteBanner();
           });
       }
     };
@@ -2200,16 +2548,14 @@
       inEntry.remoteDescSet = true;
 
       for (const c of inEntry.pendingCandidates) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(c));
-        } catch (e) {}
+        try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (e) {}
       }
       inEntry.pendingCandidates = [];
 
       const answer = await pc.createAnswer();
       answer.sdp = preferStereoOpus(answer.sdp);
       await pc.setLocalDescription(answer);
-      if (state.screenInEntry !== inEntry) return;
+      if (ws.inEntry !== inEntry) return;
 
       inEntry.answerSent = true;
       publishDirect(streamerId, {
@@ -2228,7 +2574,11 @@
       }
       outEntryCleanupOldSessions();
       inEntry.localIceBuffer = [];
-    } catch (e) {}
+    } catch (e) {
+      if (ws.inEntry === inEntry) {
+        setStreamCardStatus(ws, '⚠️ Falha ao responder oferta WebRTC. Clique em Reconectar.', true);
+      }
+    }
   }
 
   function outEntryCleanupOldSessions() {
@@ -2239,161 +2589,21 @@
 
   if (els.btnMobileUnmute) {
     els.btnMobileUnmute.onclick = () => {
-      state.pendingAudioUnlock = false;
-      if (els.remoteStreamAudio) {
-        els.remoteStreamAudio.muted = false;
-        els.remoteStreamAudio.volume = 1;
-        els.remoteStreamAudio.play().catch(() => {});
-      }
-      els.spotlightVolume.value = '100';
-      els.spotlightVolumeLabel.textContent = '100%';
-      if (els.btnMuteToggle) els.btnMuteToggle.textContent = '🔊';
-      els.btnMobileUnmute.classList.add('hidden');
-    };
-  }
-
-  // =========================================================================
-  // 9. INTERFACE DO PLAYER, ZOOM, PIP, REAÇÕES E AUTO-HIDE HUD
-  // =========================================================================
-  function openSpotlight(targetPeerId) {
-    state.spotlightPeerId = targetPeerId;
-    state.zoomLevel = 1;
-    updateVideoZoomUI();
-    els.spotlightWrapper.classList.remove('hidden');
-    els.activeStage.classList.add('spotlight-active');
-    els.spotlightCanvas.classList.add('hidden');
-    els.dockBtnLeave.classList.remove('hidden');
-    if (els.mobLiveDot) els.mobLiveDot.classList.remove('hidden');
-
-    if (targetPeerId === state.clientId) {
-      document.body.classList.remove('is-watching-stream');
-      els.spotlightStreamerName.textContent = `${state.username} (Sua Transmissão)`;
-      setViewerStatusOverlay(null);
-      applySelfPreviewVisibility();
-    } else {
-      document.body.classList.add('is-watching-stream');
-      els.selfPreviewSaver.classList.add('hidden');
-      els.btnHideSelfPreview.classList.add('hidden');
-      const u = state.onlineUsers.get(targetPeerId);
-      els.spotlightStreamerName.textContent = `Transmissão de ${u ? u.username : 'Amigo'}`;
-      if (!state.webrtcVideoActive) {
-        setViewerStatusOverlay(`⏳ Conectando à transmissão de ${u ? u.username : 'Amigo'}...`);
-      } else {
-        setViewerStatusOverlay(null);
-      }
-    }
-    if (els.spotlightViewport) {
-      els.spotlightViewport.classList.remove('idle-cursor');
-      els.spotlightViewport.classList.add('touch-active');
-    }
-    renderStageParticipants();
-  }
-
-  function applySelfPreviewVisibility() {
-    if (state.spotlightPeerId !== state.clientId) return;
-    if (state.showSelfPreview) {
-      els.selfPreviewSaver.classList.add('hidden');
-      els.btnHideSelfPreview.classList.remove('hidden');
-      els.spotlightVideo.srcObject = state.localScreenStream;
-      els.spotlightVideo.muted = true;
-      els.spotlightVideo.play().catch(() => {});
-    } else {
-      els.spotlightVideo.srcObject = null;
-      els.selfPreviewSaver.classList.remove('hidden');
-      els.btnHideSelfPreview.classList.add('hidden');
-    }
-  }
-
-  els.btnToggleSelfPreview.onclick = () => {
-    state.showSelfPreview = true;
-    applySelfPreviewVisibility();
-  };
-
-  els.btnHideSelfPreview.onclick = () => {
-    state.showSelfPreview = false;
-    applySelfPreviewVisibility();
-  };
-
-  function closeSpotlight() {
-    if (state.spotlightPeerId && state.spotlightPeerId !== state.clientId) {
-      publishDirect(state.spotlightPeerId, { type: 'stop-watching' });
-    }
-    document.body.classList.remove('is-watching-stream');
-    state.spotlightPeerId = null;
-    state.webrtcVideoActive = false;
-    state.pendingAudioUnlock = false;
-    setViewerStatusOverlay(null);
-    if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
-    els.dockBtnLeave.classList.add('hidden');
-    if (els.mobLiveDot) els.mobLiveDot.classList.add('hidden');
-    if (state.watchRetryTimer) {
-      clearInterval(state.watchRetryTimer);
-      state.watchRetryTimer = null;
-    }
-    if (state.screenInEntry && state.screenInEntry.pc) {
-      try { state.screenInEntry.pc.close(); } catch (e) {}
-      state.screenInEntry = null;
-    }
-    els.spotlightVideo.srcObject = null;
-    if (els.remoteStreamAudio) {
-      els.remoteStreamAudio.srcObject = null;
-    }
-    els.spotlightWrapper.classList.add('hidden');
-    els.activeStage.classList.remove('spotlight-active');
-    renderStageParticipants();
-  }
-
-  // Zoom no Vídeo (100% -> 150% -> 200%)
-  function updateVideoZoomUI() {
-    if (els.videoZoomContainer) {
-      els.videoZoomContainer.style.transform = `scale(${state.zoomLevel})`;
-    }
-    if (els.btnZoomCycle) {
-      els.btnZoomCycle.textContent = `🔍 ${Math.round(state.zoomLevel * 100)}%`;
-    }
-  }
-
-  if (els.btnZoomCycle) {
-    els.btnZoomCycle.onclick = () => {
-      if (state.zoomLevel === 1) state.zoomLevel = 1.5;
-      else if (state.zoomLevel === 1.5) state.zoomLevel = 2;
-      else state.zoomLevel = 1;
-      updateVideoZoomUI();
-      showToast(`Zoom do Player: ${Math.round(state.zoomLevel * 100)}%`, '🔍');
-    };
-  }
-
-  // Picture-in-Picture (PiP)
-  if (els.btnPipMode) {
-    els.btnPipMode.onclick = async () => {
-      try {
-        if (document.pictureInPictureElement) {
-          await document.exitPictureInPicture();
-        } else if (els.spotlightVideo.requestPictureInPicture) {
-          await els.spotlightVideo.requestPictureInPicture();
+      for (const ws of state.watchedStreams.values()) {
+        ws.pendingAudioUnlock = false;
+        if (!ws.isMe && ws.audioEl) {
+          ws.muted = false;
+          ws.volume = 100;
+          ws.audioEl.muted = false;
+          ws.audioEl.volume = 1;
+          ws.audioEl.play().catch(() => {});
+          if (ws.muteBtnEl) ws.muteBtnEl.textContent = '🔊';
+          if (ws.volumeSliderEl) ws.volumeSliderEl.value = '100';
+          if (ws.volumeLabelEl) ws.volumeLabelEl.textContent = '100%';
         }
-      } catch (e) {
-        showToast('Modo Picture-in-Picture requer vídeo ativo.', '📺');
       }
+      updateGlobalUnmuteBanner();
     };
-  }
-
-  // Auto-Hide inteligente da HUD do player quando o mouse fica parado
-  let idleMouseTimer = null;
-  if (els.spotlightViewport) {
-    const wakeHud = () => {
-      els.spotlightViewport.classList.remove('idle-cursor');
-      els.spotlightViewport.classList.add('touch-active');
-      if (idleMouseTimer) clearTimeout(idleMouseTimer);
-      idleMouseTimer = setTimeout(() => {
-        if (state.spotlightPeerId && (state.webrtcVideoActive || state.spotlightPeerId === state.clientId)) {
-          els.spotlightViewport.classList.add('idle-cursor');
-          els.spotlightViewport.classList.remove('touch-active');
-        }
-      }, 2600);
-    };
-    els.spotlightViewport.addEventListener('mousemove', wakeHud);
-    els.spotlightViewport.addEventListener('touchstart', wakeHud, { passive: true });
   }
 
   // Reações Ao Vivo no Palco (Floating Emojis)
@@ -2420,7 +2630,7 @@
     };
   });
 
-  // Telemetria a cada 1s (Pausa automaticamente quando a janela está atrás do jogo p/ 0% de custo de CPU/IPC!)
+  // Telemetria a cada 1s (Individual por Card Multi-Stream + HUD)
   const previousVideoStats = new WeakMap();
 
   function sampleVideoStats(pc, report) {
@@ -2441,12 +2651,11 @@
 
   setInterval(async () => {
     const hudVisible = Boolean(els.rtcTelemetryHud && !els.rtcTelemetryHud.classList.contains('hidden'));
-    const overlayVisible =
-      Boolean(state.spotlightPeerId) &&
-      (!els.spotlightViewport || !els.spotlightViewport.classList.contains('idle-cursor'));
+    const hasVisibleCards = [...state.watchedStreams.values()].some(
+      (w) => w.cardEl && !w.cardEl.classList.contains('hidden') && !w.cardEl.classList.contains('idle-cursor')
+    );
 
-    // Zero IPC getStats() e zero repaints do DOM quando a janela está atrás do jogo ou quando a HUD/cursor está oculta!
-    if ((document.hidden && state.isStreaming) || (!hudVisible && !overlayVisible)) {
+    if ((document.hidden && state.isStreaming) || (!hudVisible && !hasVisibleCards)) {
       state.framesCapturedCount = 0;
       state.bytesTransferredThisSec = 0;
       state.lastStatsTime = performance.now();
@@ -2457,20 +2666,20 @@
     const dt = Math.max(0.5, (now - state.lastStatsTime) / 1000);
     state.lastStatsTime = now;
 
-    let fps = Math.round(state.framesCapturedCount / dt);
-    let mbps = ((state.bytesTransferredThisSec * 8) / dt / 1_000_000).toFixed(1);
+    let outFps = Math.round(state.framesCapturedCount / dt);
+    let outMbps = ((state.bytesTransferredThisSec * 8) / dt / 1_000_000).toFixed(1);
     state.framesCapturedCount = 0;
     state.bytesTransferredThisSec = 0;
 
     const targetResSpec = RESOLUTION_MAP[state.streamSettings.resolution] || RESOLUTION_MAP['1080'];
-    let resText = `${targetResSpec.width}×${targetResSpec.height}`;
+    let outRes = `${targetResSpec.width}×${targetResSpec.height}`;
 
     if (state.isStreaming && state.localScreenStream) {
       const vt = state.localScreenStream.getVideoTracks()[0];
       if (vt && vt.getSettings) {
         const s = vt.getSettings();
-        if (s.width && s.height) resText = `${s.width}×${s.height}`;
-        if (!state.localCaptureWs) fps = null;
+        if (s.width && s.height) outRes = `${s.width}×${s.height}`;
+        if (!state.localCaptureWs) outFps = null;
       }
 
       let activeOut = null;
@@ -2493,9 +2702,9 @@
           stats.forEach((r) => {
             if (r.type !== 'outbound-rtp' || r.kind !== 'video') return;
             const sample = sampleVideoStats(activeOut.pc, r);
-            fps = sample.fps;
-            mbps = sample.mbps;
-            if (r.frameWidth && r.frameHeight) resText = `${r.frameWidth}×${r.frameHeight}`;
+            outFps = sample.fps;
+            outMbps = sample.mbps;
+            if (r.frameWidth && r.frameHeight) outRes = `${r.frameWidth}×${r.frameHeight}`;
             if (els.statCodec) {
               const codec = stats.get(r.codecId)?.mimeType?.split('/')[1] || 'WebRTC';
               els.statCodec.textContent = r.powerEfficientEncoder ? `${codec} (GPU)` : codec;
@@ -2503,35 +2712,52 @@
           });
         } catch (e) {}
       }
+
+      const selfWs = state.watchedStreams.get(state.clientId);
+      if (selfWs) {
+        selfWs.resBadgeEl.textContent = outRes;
+        selfWs.fpsBadgeEl.textContent = outFps === null ? '— FPS' : `${Math.round(outFps)} FPS`;
+        selfWs.mbpsBadgeEl.textContent = outMbps === null ? '— Mbps' : `${outMbps} Mbps`;
+      }
     }
 
-    const inEntry = state.screenInEntry;
-    if (inEntry && state.spotlightPeerId === inEntry.streamerId) {
+    let firstRemoteStats = null;
+    for (const ws of state.watchedStreams.values()) {
+      if (ws.isMe || !ws.inEntry?.pc) continue;
       try {
-        const stats = await inEntry.pc.getStats();
-        if (state.screenInEntry !== inEntry) return;
+        const pc = ws.inEntry.pc;
+        const stats = await pc.getStats();
+        if (ws.inEntry?.pc !== pc) continue;
         stats.forEach((r) => {
           if (r.type !== 'inbound-rtp' || r.kind !== 'video') return;
-          const sample = sampleVideoStats(inEntry.pc, r);
-          fps = sample.fps;
-          mbps = sample.mbps;
-          if (r.frameWidth && r.frameHeight) resText = `${r.frameWidth}×${r.frameHeight}`;
+          const sample = sampleVideoStats(pc, r);
+          const rRes = (r.frameWidth && r.frameHeight) ? `${r.frameWidth}×${r.frameHeight}` : ws.resBadgeEl.textContent;
+          const rFps = sample.fps === null ? '— FPS' : `${Math.round(sample.fps)} FPS`;
+          const rMbps = sample.mbps === null ? '— Mbps' : `${sample.mbps} Mbps`;
+          ws.resBadgeEl.textContent = rRes;
+          ws.fpsBadgeEl.textContent = rFps;
+          ws.mbpsBadgeEl.textContent = rMbps;
+          if (!firstRemoteStats || state.focusedStreamerId === ws.streamerId) {
+            firstRemoteStats = { res: rRes, fps: rFps, mbps: rMbps };
+          }
         });
       } catch (e) {}
     }
-    const fpsText = fps === null ? '— FPS' : `${Math.round(fps)} FPS`;
-    const mbpsText = mbps === null ? '— Mbps' : `${mbps} Mbps`;
 
     if (hudVisible) {
-      els.statResolution.textContent = resText;
-      els.statFps.textContent = fpsText;
-      els.statBitrate.textContent = mbpsText;
-    }
-
-    if (overlayVisible) {
-      els.spotlightResBadge.textContent = resText;
-      els.spotlightFpsBadge.textContent = fpsText;
-      els.spotlightBitrateBadge.textContent = mbpsText;
+      if (state.isStreaming) {
+        els.statResolution.textContent = outRes;
+        els.statFps.textContent = outFps === null ? '— FPS' : `${Math.round(outFps)} FPS`;
+        els.statBitrate.textContent = outMbps === null ? '— Mbps' : `${outMbps} Mbps`;
+      } else if (firstRemoteStats) {
+        els.statResolution.textContent = firstRemoteStats.res;
+        els.statFps.textContent = firstRemoteStats.fps;
+        els.statBitrate.textContent = firstRemoteStats.mbps;
+      } else {
+        els.statResolution.textContent = outRes;
+        els.statFps.textContent = '— FPS';
+        els.statBitrate.textContent = '— Mbps';
+      }
     }
   }, 1000);
 
@@ -2547,8 +2773,10 @@
     const ch = state.channels.find((c) => c.id === channelId);
     if (!ch) return;
     if (state.currentChannelId !== ch.id) {
-      if (state.spotlightPeerId !== state.clientId) closeSpotlight();
-      for (const viewerId of state.screenOutPcs.keys()) closeScreenOutPc(viewerId);
+      for (const sid of [...state.watchedStreams.keys()]) {
+        if (sid !== state.clientId) closeWatchedStream(sid);
+      }
+      for (const viewerId of [...state.screenOutPcs.keys()]) closeScreenOutPc(viewerId);
     }
     state.currentChannelId = ch.id;
     els.stageTitle.textContent = ch.name;
@@ -2572,7 +2800,8 @@
     const chSig = state.channels.map((c) => `${c.id}:${c.name}`).join(',');
     const parts = [
       state.currentChannelId || 'NONE',
-      state.spotlightPeerId || '',
+      [...state.watchedStreams.keys()].join(','),
+      state.focusedStreamerId || '',
       state.bannedFromRooms.has(state.roomCode) ? 'BANNED' : 'OK',
       chSig,
       [...state.locallyMutedUsers].join(','),
@@ -2654,7 +2883,7 @@
           if (u.streaming) {
             uRow.style.cursor = 'pointer';
             uRow.onclick = () => {
-              if (u.id === state.clientId) openSpotlight(state.clientId);
+              if (u.id === state.clientId) openSelfPreviewCard();
               else watchFriendStream(u.id);
             };
           }
@@ -2708,16 +2937,18 @@
 
     users.forEach((u) => {
       const isMe = u.id === state.clientId;
+      const isWatched = state.watchedStreams.has(u.id);
       const isLocallyMuted = state.locallyMutedUsers.has(u.id);
       const tile = document.createElement('div');
-      tile.className = `participant-tile ${u.streaming ? 'streaming-tile' : ''}`;
+      tile.className = `participant-tile ${u.streaming ? 'streaming-tile' : ''} ${isWatched ? 'is-watched-tile' : ''}`;
       tile.style.setProperty('--tile-tint', `${u.avatarColor || '#5865F2'}44`);
       const initial = (u.username || 'A')[0].toUpperCase();
 
       let badgeHtml = '';
       if (u.streaming) {
         const specText = u.streamConfig ? `${u.streamConfig.resolution} ${u.streamConfig.fps}FPS` : '1080p 60FPS';
-        badgeHtml = `<div class="tile-live-corner">AO VIVO</div><div class="watch-stream-cta">Assistir • ${specText}</div>`;
+        const ctaText = isWatched ? `Assistindo ✓ • ${specText}` : `Assistir • ${specText}`;
+        badgeHtml = `<div class="tile-live-corner">AO VIVO</div><div class="watch-stream-cta">${ctaText}</div>`;
       }
 
       tile.innerHTML = `
@@ -2731,7 +2962,7 @@
 
       tile.onclick = () => {
         if (u.streaming) {
-          if (isMe) openSpotlight(state.clientId);
+          if (isMe) openSelfPreviewCard();
           else watchFriendStream(u.id);
         }
       };
@@ -3076,42 +3307,6 @@
   els.btnRefreshSources.onclick = loadNativeSources;
   els.btnConfirmGoLive.onclick = () => startNativeScreenShare();
 
-  els.btnReconnectStream.onclick = () => {
-    if (state.spotlightPeerId && state.spotlightPeerId !== state.clientId) {
-      watchFriendStream(state.spotlightPeerId, true);
-      showToast('Reconectando à transmissão...', '🔄');
-    }
-  };
-
-  els.spotlightVolume.oninput = () => {
-    const v = Number(els.spotlightVolume.value);
-    if (els.remoteStreamAudio) {
-      els.remoteStreamAudio.volume = v / 100;
-      els.remoteStreamAudio.muted = v === 0;
-      if (v > 0) {
-        state.pendingAudioUnlock = false;
-        els.remoteStreamAudio.play().catch(() => {});
-        if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
-      }
-    }
-    if (els.btnMuteToggle) els.btnMuteToggle.textContent = v === 0 ? '🔇' : '🔊';
-    els.spotlightVolumeLabel.textContent = `${v}%`;
-  };
-
-  if (els.btnMuteToggle) {
-    els.btnMuteToggle.onclick = () => {
-      if (els.remoteStreamAudio) {
-        els.remoteStreamAudio.muted = !els.remoteStreamAudio.muted;
-        if (!els.remoteStreamAudio.muted) {
-          state.pendingAudioUnlock = false;
-          els.remoteStreamAudio.play().catch(() => {});
-          if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
-        }
-        els.btnMuteToggle.textContent = els.remoteStreamAudio.muted ? '🔇' : '🔊';
-      }
-    };
-  }
-
   if (els.btnToggleSfx) {
     els.sfxIconLabel.textContent = state.sfxEnabled ? '🔔' : '🔕';
     els.btnToggleSfx.onclick = () => {
@@ -3161,28 +3356,13 @@
   };
 
   els.dockBtnLeave.onclick = () => {
-    if (state.isStreaming && state.spotlightPeerId === state.clientId) {
+    const hasRemoteStreams = [...state.watchedStreams.keys()].some((id) => id !== state.clientId);
+    if (hasRemoteStreams) {
+      closeAllWatchedStreams();
+    } else if (state.isStreaming && state.watchedStreams.has(state.clientId)) {
       stopScreenShare(true);
     } else {
-      closeSpotlight();
-    }
-  };
-
-  document.getElementById('btn-fit-mode').onclick = () => {
-    els.spotlightVideo.classList.toggle('fit-cover');
-    els.spotlightCanvas.classList.toggle('fit-cover');
-  };
-
-  document.getElementById('btn-fullscreen').onclick = () => {
-    if (!document.fullscreenElement) {
-      if (els.spotlightViewport.requestFullscreen) {
-        els.spotlightViewport.requestFullscreen().catch(() => {});
-      } else if (els.spotlightVideo.webkitEnterFullscreen) {
-        // Suporte nativo a Tela Cheia no iOS Safari
-        els.spotlightVideo.webkitEnterFullscreen();
-      }
-    } else {
-      document.exitFullscreen().catch(() => {});
+      closeAllWatchedStreams();
     }
   };
 
@@ -3299,7 +3479,7 @@
     }
     if (newRoom && newRoom !== state.roomCode) {
       if (state.isStreaming) stopScreenShare(true);
-      else closeSpotlight();
+      closeAllWatchedStreams();
       state.roomCode = newRoom.replace(/[^A-Z0-9_-]/g, '').slice(0, 24) || 'IGOR-2K60';
       localStorage.setItem('streamcord_room', state.roomCode);
       state.onlineUsers.clear();
@@ -3360,6 +3540,8 @@
           }
           if (prof.streamSettings) {
             Object.assign(state.streamSettings, prof.streamSettings);
+            if (prof.streamSettings.captureEngine) localStorage.setItem('streamcord_engine', prof.streamSettings.captureEngine);
+            if (prof.streamSettings.audioMode) localStorage.setItem('streamcord_audio', prof.streamSettings.audioMode);
             if (prof.streamSettings.resolution) localStorage.setItem('streamcord_res', prof.streamSettings.resolution);
             if (prof.streamSettings.fps) localStorage.setItem('streamcord_fps', String(prof.streamSettings.fps));
             if (prof.streamSettings.preset) localStorage.setItem('streamcord_preset', prof.streamSettings.preset);
@@ -3407,7 +3589,7 @@
 
   function disconnectFromCall(notifyToast = true) {
     if (state.isStreaming) stopScreenShare(false);
-    closeSpotlight();
+    closeAllWatchedStreams();
     state.currentChannelId = null;
     els.stageTitle.textContent = 'Desconectado';
     els.voiceCurrentChannelName.textContent = 'Fora da chamada';
@@ -3580,7 +3762,7 @@
     u.channelId = null;
     u.streaming = false;
     state.onlineUsers.set(u.id, u);
-    if (state.spotlightPeerId === u.id) closeSpotlight();
+    if (state.watchedStreams.has(u.id)) closeWatchedStream(u.id);
     renderChannelsSidebar();
     renderStageParticipants();
     showToast(`${u.username} foi expulso da chamada.`, '👢');
@@ -3591,7 +3773,7 @@
     state.bannedUsers.set(u.id, u.username);
     publishDirect(u.id, { type: 'mod-action', action: 'ban', by: state.username });
     state.onlineUsers.delete(u.id);
-    if (state.spotlightPeerId === u.id) closeSpotlight();
+    if (state.watchedStreams.has(u.id)) closeWatchedStream(u.id);
     renderChannelsSidebar();
     renderStageParticipants();
     showToast(`${u.username} foi banido da sala.`, '🚫');
@@ -3599,16 +3781,21 @@
 
   function toggleLocalMuteUser(u) {
     if (!u || u.id === state.clientId) return;
+    const ws = state.watchedStreams.get(u.id);
     if (state.locallyMutedUsers.has(u.id)) {
       state.locallyMutedUsers.delete(u.id);
-      if (state.spotlightPeerId === u.id && els.remoteStreamAudio) {
-        els.remoteStreamAudio.muted = false;
+      if (ws && ws.audioEl) {
+        ws.muted = false;
+        ws.audioEl.muted = false;
+        if (ws.muteBtnEl) ws.muteBtnEl.textContent = '🔊';
       }
       showToast(`Áudio de ${u.username} ativado para você.`, '🔊');
     } else {
       state.locallyMutedUsers.add(u.id);
-      if (state.spotlightPeerId === u.id && els.remoteStreamAudio) {
-        els.remoteStreamAudio.muted = true;
+      if (ws && ws.audioEl) {
+        ws.muted = true;
+        ws.audioEl.muted = true;
+        if (ws.muteBtnEl) ws.muteBtnEl.textContent = '🔇';
       }
       showToast(`${u.username} silenciado para você.`, '🔇');
     }
@@ -3691,7 +3878,7 @@
     if (u.streaming) {
       items.push({
         label: '📺 Assistir Transmissão',
-        action: () => (isMe ? openSpotlight(state.clientId) : watchFriendStream(u.id)),
+        action: () => (isMe ? openSelfPreviewCard() : watchFriendStream(u.id)),
       });
     }
 
