@@ -1,6 +1,6 @@
-// StreamCord v9.5.2 — Cliente Web & Desktop Nativo WebView2 (Zero 404 na Web + Status P2P + ICE Rápido)
+// StreamCord v9.6.0 — Motor Híbrido GPU Zero-Copy + EcoQoS Tree Shield + Áudio WASAPI Zero-GC
 (() => {
-  const APP_VERSION = '9.5.2';
+  const APP_VERSION = '9.6.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const RTC_CONFIG = {
@@ -170,11 +170,12 @@
     showSelfPreview: false,
 
     streamSettings: {
+      captureEngine: localStorage.getItem('streamcord_engine') || 'gpu_zerocopy',
       preset: localStorage.getItem('streamcord_preset') || 'motion',
       resolution: localStorage.getItem('streamcord_res') || '1080',
       fps: Number(localStorage.getItem('streamcord_fps')) || 60,
-      bitrateKbps: Number(localStorage.getItem('streamcord_bitrate')) || 12000,
-      audioMode: 'pc_no_discord',
+      bitrateKbps: Number(localStorage.getItem('streamcord_bitrate')) || 8000,
+      audioMode: localStorage.getItem('streamcord_audio') || 'pc_no_discord',
     },
 
     // Conexões WebRTC Dedicadas
@@ -520,6 +521,7 @@
     tabBrowserCam: document.getElementById('tab-browser-cam'),
     btnRefreshSources: document.getElementById('btn-refresh-sources'),
     sourcesGrid: document.getElementById('sources-grid'),
+    captureEngineSelect: document.getElementById('capture-engine-select'),
     audioModeSelect: document.getElementById('audio-mode-select'),
     resolutionSelect: document.getElementById('resolution-select'),
     fpsSelect: document.getElementById('fps-select'),
@@ -1122,6 +1124,13 @@
       renderSourcesGrid();
       return;
     }
+
+    if (state.streamSettings.captureEngine !== 'legacy_csharp') {
+      state.hasNativeBackend = true;
+      renderSourcesGrid();
+      return;
+    }
+
     els.sourcesGrid.innerHTML = `<div class="sources-loading">Carregando monitores, janelas e opções mobile...</div>`;
     try {
       const res = await fetch('/api/sources?t=' + Date.now());
@@ -1188,6 +1197,17 @@
         };
         els.sourcesGrid.appendChild(card);
       });
+      return;
+    }
+
+    if (state.streamSettings.captureEngine !== 'legacy_csharp') {
+      els.sourcesGrid.innerHTML = `
+        <div class="zero-copy-info-card">
+          <strong>⚡ Captura Direta na Placa de Vídeo (GPU Zero-Copy WGC / DXGI)</strong>
+          <p>Neste modo, o vídeo do seu jogo vai direto da VRAM da placa de vídeo para o chip de transmissão (sem JPEG e sem cópia na CPU) e o áudio do sistema continua vindo pelo WASAPI com o Discord silenciado.</p>
+          <p>Clique em <strong>🔴 Transmitir Ao Vivo</strong> abaixo para escolher a tela ou a janela do jogo no seletor nativo do Windows/GPU.</p>
+        </div>
+      `;
       return;
     }
 
@@ -1261,7 +1281,7 @@
   setTimeout(() => { if (!state.hasPowerEfficientH264) detectGpuHardwareCodecs(); }, 900);
   setTimeout(() => { if (!state.hasPowerEfficientH264) detectGpuHardwareCodecs(); }, 2400);
 
-  async function startSystemAudioCaptureWithoutDiscord(wsProto) {
+  async function startSystemAudioCaptureWithoutDiscord(wsProto, overrideSourceId = null) {
     if (state.streamSettings.audioMode === 'none') return null;
 
     try {
@@ -1386,9 +1406,10 @@
         state.activeWorkletNode = fallbackScriptNode;
       }
 
+      const audioSource = overrideSourceId || state.selectedSourceId;
       const audioWsUrl = `${wsProto}//${window.location.host}/ws-audio?mode=${encodeURIComponent(
         state.streamSettings.audioMode
-      )}&source=${encodeURIComponent(state.selectedSourceId)}`;
+      )}&source=${encodeURIComponent(audioSource)}`;
 
       const audioWs = new WebSocket(audioWsUrl);
       audioWs.binaryType = 'arraybuffer';
@@ -1515,9 +1536,74 @@
     return mediaStream;
   }
 
+  async function startLegacyCsharpCapture(cfg, resSpec, wsProto) {
+    const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto);
+    ensureFallbackCanvas();
+    const wsUrl = `${wsProto}//${window.location.host}/ws-capture?source=${encodeURIComponent(
+      state.selectedSourceId
+    )}&height=${resSpec.heightNum}&fps=${cfg.fps}&detail=${cfg.preset === 'detail' ? 1 : 0}`;
+
+    const capWs = new WebSocket(wsUrl);
+    capWs.binaryType = 'blob';
+    state.localCaptureWs = capWs;
+
+    capWs.onmessage = async (ev) => {
+      if (!state.isStreaming || state.localCaptureWs !== capWs) return;
+      state.nextFrameBlob = ev.data;
+      state.bytesTransferredThisSec += ev.data.size;
+      if (state.decodingFrame) return;
+
+      state.decodingFrame = true;
+      try {
+        while (state.nextFrameBlob && state.isStreaming) {
+          const blob = state.nextFrameBlob;
+          state.nextFrameBlob = null;
+          const bmp = await createImageBitmap(blob);
+          if (!state.isStreaming || state.localCaptureWs !== capWs) {
+            bmp.close();
+            break;
+          }
+          if (state.captureCanvas.width !== bmp.width || state.captureCanvas.height !== bmp.height) {
+            state.captureCanvas.width = bmp.width;
+            state.captureCanvas.height = bmp.height;
+          }
+          state.captureCtx.drawImage(bmp, 0, 0);
+          bmp.close();
+          state.framesCapturedCount++;
+        }
+      } catch (e) {
+      } finally {
+        state.decodingFrame = false;
+      }
+    };
+    capWs.onclose = () => {
+      if (state.localCaptureWs !== capWs || !state.isStreaming) return;
+      stopScreenShare(true);
+      showToast('A conexão com a captura de tela foi encerrada.', '⚠️');
+    };
+
+    const legacyStream = state.captureCanvas.captureStream(cfg.fps);
+    const cvTrack = legacyStream.getVideoTracks()[0];
+    if (cvTrack) {
+      try { cvTrack.contentHint = cfg.preset === 'detail' ? 'detail' : 'motion'; } catch (e) {}
+    }
+    if (sysAudioTrack) {
+      legacyStream.addTrack(sysAudioTrack);
+    }
+    return legacyStream;
+  }
+
   async function startNativeScreenShare() {
     stopScreenShare(false);
 
+    if (els.captureEngineSelect && els.captureEngineSelect.value) {
+      state.streamSettings.captureEngine = els.captureEngineSelect.value;
+      localStorage.setItem('streamcord_engine', state.streamSettings.captureEngine);
+    }
+    if (els.audioModeSelect && els.audioModeSelect.value) {
+      state.streamSettings.audioMode = els.audioModeSelect.value;
+      localStorage.setItem('streamcord_audio', state.streamSettings.audioMode);
+    }
     if (els.resolutionSelect && els.resolutionSelect.value) {
       state.streamSettings.resolution = els.resolutionSelect.value;
       localStorage.setItem('streamcord_res', state.streamSettings.resolution);
@@ -1542,63 +1628,42 @@
         showToast('Permissão de captura cancelada ou indisponível.', '⚠️');
         return;
       }
-    } else {
-      // Usa captura nativa C# (/ws-capture) para o monitor/janela já selecionado no modal do StreamCord,
-      // evitando abrir o popup secundário e a barra flutuante do navegador.
-      const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto);
-      ensureFallbackCanvas();
-      const wsUrl = `${wsProto}//${window.location.host}/ws-capture?source=${encodeURIComponent(
-        state.selectedSourceId
-      )}&height=${resSpec.heightNum}&fps=${cfg.fps}&detail=${cfg.preset === 'detail' ? 1 : 0}`;
+    } else if (cfg.captureEngine !== 'legacy_csharp') {
+      // Chamada imediata dentro do clique para preservar o gesto do usuário no WebView2 (GPU Zero-Copy DXGI/WGC)!
+      const gpuRes = await acquireZeroCopyGpuStream(cfg, resSpec, false);
+      if (gpuRes.cancelled) {
+        showToast('Seleção de tela cancelada.', '⚠️');
+        return;
+      }
 
-      const capWs = new WebSocket(wsUrl);
-      capWs.binaryType = 'blob';
-      state.localCaptureWs = capWs;
-
-      capWs.onmessage = async (ev) => {
-        if (!state.isStreaming || state.localCaptureWs !== capWs) return;
-        state.nextFrameBlob = ev.data;
-        state.bytesTransferredThisSec += ev.data.size;
-        if (state.decodingFrame) return;
-
-        state.decodingFrame = true;
-        try {
-          while (state.nextFrameBlob && state.isStreaming) {
-            const blob = state.nextFrameBlob;
-            state.nextFrameBlob = null;
-            const bmp = await createImageBitmap(blob);
-            if (!state.isStreaming || state.localCaptureWs !== capWs) {
-              bmp.close();
-              break;
+      if (gpuRes.stream) {
+        const dxgiStream = gpuRes.stream;
+        const vTrack = dxgiStream.getVideoTracks()[0];
+        let audioSourceArg = state.selectedSourceId;
+        if (vTrack) {
+          try { vTrack.contentHint = cfg.preset === 'detail' ? 'detail' : 'motion'; } catch (e) {}
+          vTrack.onended = () => stopScreenShare(true);
+          if (cfg.audioMode === 'window_only' && vTrack.label) {
+            const hwndMatch = vTrack.label.match(/^window:(\d+)/i);
+            if (hwndMatch) {
+              audioSourceArg = `window:${hwndMatch[1]}`;
+            } else if (!vTrack.label.startsWith('screen:')) {
+              audioSourceArg = `wtitle:${vTrack.label}`;
             }
-            if (state.captureCanvas.width !== bmp.width || state.captureCanvas.height !== bmp.height) {
-              state.captureCanvas.width = bmp.width;
-              state.captureCanvas.height = bmp.height;
-            }
-            state.captureCtx.drawImage(bmp, 0, 0);
-            bmp.close();
-            state.framesCapturedCount++;
           }
-        } catch (e) {
-        } finally {
-          state.decodingFrame = false;
         }
-      };
-      capWs.onclose = () => {
-        if (state.localCaptureWs !== capWs || !state.isStreaming) return;
-        stopScreenShare(true);
-        showToast('A conexão com a captura de tela foi encerrada.', '⚠️');
-      };
-
-      state.localScreenStream = state.captureCanvas.captureStream(cfg.fps);
-      const cvTrack = state.localScreenStream.getVideoTracks()[0];
-      if (cvTrack) {
-        try { cvTrack.contentHint = cfg.preset === 'detail' ? 'detail' : 'motion'; } catch (e) {}
+        const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto, audioSourceArg);
+        if (sysAudioTrack) {
+          dxgiStream.addTrack(sysAudioTrack);
+        }
+        state.localScreenStream = dxgiStream;
+      } else {
+        // Fallback automático caso o ambiente WebView2 não consiga abrir o seletor GPU
+        state.localScreenStream = await startLegacyCsharpCapture(cfg, resSpec, wsProto);
+        showToast('Motor GPU indisponível neste dispositivo; usando modo compatibilidade C#.', 'ℹ️');
       }
-
-      if (sysAudioTrack) {
-        state.localScreenStream.addTrack(sysAudioTrack);
-      }
+    } else {
+      state.localScreenStream = await startLegacyCsharpCapture(cfg, resSpec, wsProto);
     }
 
     if (state.spotlightPeerId) closeSpotlight();
@@ -1725,7 +1790,7 @@
         ? vp8List
         : preset === 'av1' ? av1List : sortedGpuH264;
       const ordered = [...new Set([
-        ...preferred, ...sortedGpuH264, ...vp8List, ...lowH264, ...vp9List, ...av1List, ...restCodecs,
+        ...preferred, ...sortedGpuH264, ...lowH264, ...vp8List, ...vp9List, ...av1List, ...restCodecs,
       ])];
 
       if (ordered.length === 0) return;
@@ -1751,17 +1816,19 @@
     const videoTrack = state.localScreenStream?.getVideoTracks()[0];
     const sourceHeight = videoTrack?.getSettings().height || 0;
     const selectedHeight = RESOLUTION_MAP[resolution]?.heightNum;
-    // The canvas can still be 300x150 before the first native capture frame.
     const height = selectedHeight
       ? Math.min(selectedHeight, sourceHeight >= 360 ? sourceHeight : selectedHeight)
-      : (sourceHeight >= 360 ? sourceHeight : 1440);
+      : (sourceHeight >= 360 ? sourceHeight : 1080);
 
-    const totalBps = Math.min(25000, Math.max(2500, Number(bitrateKbps) || 12000)) * 1000;
-    const perViewerBps = Math.max(1, Math.floor(totalBps / count));
-    // Bound the total pixel rate while retaining at least 360p when possible.
-    const pixelScale = Math.sqrt(count);
-    const bandwidthScale = Math.sqrt((3000000 * (height / 720) ** 2 * fps / 60) / perViewerBps);
-    const scale = Math.max(1, Math.min(height / 360, Math.max(pixelScale, bandwidthScale)));
+    const totalBps = Math.min(25000, Math.max(2500, Number(bitrateKbps) || 8000)) * 1000;
+    const perViewerBps = Math.max(1500000, Math.floor(totalBps / count));
+
+    // Mantém resolução nativa (scale = 1.0) enquanto houver >= 2.5 Mbps por espectador,
+    // evitando reconfigurações bruscas do encoder ao entrar um 2º amigo na call!
+    let scale = 1;
+    if (perViewerBps < 2500000 && height > 720) {
+      scale = Math.min(height / 720, Math.sqrt(2500000 / perViewerBps));
+    }
 
     return {
       maxBitrate: perViewerBps,
@@ -2088,15 +2155,21 @@
         }
         els.spotlightVideo.play().catch(() => {});
 
-        const checkDecoded = setInterval(() => {
-          if (state.spotlightPeerId !== streamerId || state.screenInEntry !== inEntry) {
-            clearInterval(checkDecoded);
-            return;
-          }
+        const markVideoReady = () => {
+          if (state.spotlightPeerId !== streamerId || state.screenInEntry !== inEntry) return false;
           if (els.spotlightVideo.videoWidth > 0 && els.spotlightVideo.readyState >= 2) {
             state.webrtcVideoActive = true;
             els.spotlightCanvas.classList.add('hidden');
             setViewerStatusOverlay(null);
+            return true;
+          }
+          return false;
+        };
+        els.spotlightVideo.onloadeddata = markVideoReady;
+        els.spotlightVideo.onplaying = markVideoReady;
+
+        const checkDecoded = setInterval(() => {
+          if (state.spotlightPeerId !== streamerId || state.screenInEntry !== inEntry || markVideoReady()) {
             clearInterval(checkDecoded);
           }
         }, 120);
@@ -2193,10 +2266,12 @@
     if (els.mobLiveDot) els.mobLiveDot.classList.remove('hidden');
 
     if (targetPeerId === state.clientId) {
+      document.body.classList.remove('is-watching-stream');
       els.spotlightStreamerName.textContent = `${state.username} (Sua Transmissão)`;
       setViewerStatusOverlay(null);
       applySelfPreviewVisibility();
     } else {
+      document.body.classList.add('is-watching-stream');
       els.selfPreviewSaver.classList.add('hidden');
       els.btnHideSelfPreview.classList.add('hidden');
       const u = state.onlineUsers.get(targetPeerId);
@@ -2243,6 +2318,7 @@
     if (state.spotlightPeerId && state.spotlightPeerId !== state.clientId) {
       publishDirect(state.spotlightPeerId, { type: 'stop-watching' });
     }
+    document.body.classList.remove('is-watching-stream');
     state.spotlightPeerId = null;
     state.webrtcVideoActive = false;
     state.pendingAudioUnlock = false;
@@ -2479,18 +2555,9 @@
     els.voiceCurrentChannelName.textContent = ch.name;
     playDiscordSound('join');
 
-    // Se não estiver transmitindo, alinha a resolução e bitrate recomendados da sala
-    if (!state.isStreaming && ch.defaultRes) {
-      state.streamSettings.resolution = ch.defaultRes;
-      state.streamSettings.fps = ch.defaultFps || 60;
-      state.streamSettings.bitrateKbps = ch.defaultKbps || 20000;
-      localStorage.setItem('streamcord_res', state.streamSettings.resolution);
-      localStorage.setItem('streamcord_fps', String(state.streamSettings.fps));
-      localStorage.setItem('streamcord_bitrate', String(state.streamSettings.bitrateKbps));
-      saveProfileToServer();
-      updateLocalProfileUI();
-      syncStreamModalControls();
-    }
+    saveProfileToServer();
+    updateLocalProfileUI();
+    syncStreamModalControls();
 
     announcePresence(true);
     if (window.innerWidth <= 900) {
@@ -2518,6 +2585,7 @@
 
   function renderChannelsSidebar() {
     state.onlineUsers.set(state.clientId, getMyStateObject());
+    if (document.hidden && state.isStreaming) return;
     const sig = computeStateSignature();
     if (sig === lastSidebarSig) return;
     lastSidebarSig = sig;
@@ -2599,6 +2667,7 @@
   }
 
   function renderStageParticipants() {
+    if (document.hidden && state.isStreaming) return;
     const sig = computeStateSignature();
     if (sig === lastStageSig) return;
     lastStageSig = sig;
@@ -2913,6 +2982,9 @@
   // 11. EVENTOS GERAIS
   // =========================================================================
   function syncStreamModalControls() {
+    if (els.captureEngineSelect) {
+      els.captureEngineSelect.value = state.streamSettings.captureEngine || 'gpu_zerocopy';
+    }
     if (els.resolutionSelect) {
       els.resolutionSelect.value = state.streamSettings.resolution;
     }
@@ -2956,18 +3028,24 @@
 
   els.tabMonitors.onclick = () => {
     state.sourceTab = 'monitor';
+    if (state.selectedSourceId.startsWith('web:')) state.selectedSourceId = 'monitor:0';
     els.tabMonitors.classList.add('active');
     els.tabWindows.classList.remove('active');
     if (els.tabBrowserCam) els.tabBrowserCam.classList.remove('active');
-    renderSourcesGrid();
+    if (state.streamSettings.captureEngine === 'legacy_csharp' && state.nativeSources.length === 0) {
+      loadNativeSources();
+    } else {
+      renderSourcesGrid();
+    }
   };
 
   els.tabWindows.onclick = () => {
     state.sourceTab = 'window';
+    if (state.selectedSourceId.startsWith('web:')) state.selectedSourceId = 'monitor:0';
     els.tabWindows.classList.add('active');
     els.tabMonitors.classList.remove('active');
     if (els.tabBrowserCam) els.tabBrowserCam.classList.remove('active');
-    renderSourcesGrid();
+    loadNativeSources();
   };
 
   if (els.tabBrowserCam) {
@@ -2980,8 +3058,18 @@
     };
   }
 
+  if (els.captureEngineSelect) {
+    els.captureEngineSelect.onchange = () => {
+      state.streamSettings.captureEngine = els.captureEngineSelect.value;
+      localStorage.setItem('streamcord_engine', state.streamSettings.captureEngine);
+      saveProfileToServer();
+      loadNativeSources();
+    };
+  }
+
   els.audioModeSelect.onchange = () => {
     state.streamSettings.audioMode = els.audioModeSelect.value;
+    localStorage.setItem('streamcord_audio', state.streamSettings.audioMode);
     saveProfileToServer();
   };
 

@@ -305,7 +305,7 @@
               </div>
               <div class="hud-item">
                 <span class="hud-label">Versão do App</span>
-                <span class="hud-val" id="stat-loss">v9.5.2</span>
+                <span class="hud-val" id="stat-loss">v9.6.0</span>
               </div>
             </div>
           </div>
@@ -420,14 +420,24 @@
           </div>
         </div>
 
-        <!-- Seleção de Áudio da Transmissão -->
-        <div class="form-section">
-          <label class="section-label" for="audio-mode-select">ÁUDIO</label>
-          <select id="audio-mode-select" class="discord-select">
-            <option value="pc_no_discord" selected>🔊 Som do PC</option>
-            <option value="window_only">🎮 Som apenas da janela selecionada</option>
-            <option value="none">🔇 Sem áudio</option>
-          </select>
+        <!-- Seleção de Motor de Captura (GPU Zero-Copy vs Legado 1-Clique) + Áudio -->
+        <div class="form-section two-cols">
+          <div>
+            <label class="section-label" for="capture-engine-select">MOTOR DE CAPTURA DE VÍDEO</label>
+            <select id="capture-engine-select" class="discord-select">
+              <option value="gpu_zerocopy" selected>⚡ GPU Zero-Copy Nativa (Recomendado — Máximo FPS)</option>
+              <option value="legacy_csharp">🪟 Captura Direta C# (1 Clique — Compatibilidade)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="section-label" for="audio-mode-select">ÁUDIO</label>
+            <select id="audio-mode-select" class="discord-select">
+              <option value="pc_no_discord" selected>🔊 Som do PC (Discord Mudo)</option>
+              <option value="window_only">🎮 Som apenas da janela selecionada</option>
+              <option value="none">🔇 Sem áudio</option>
+            </select>
+          </div>
         </div>
 
         <!-- Dropdowns de Resolução e Taxa de Quadros -->
@@ -466,9 +476,9 @@
           <div>
             <div class="label-row">
               <label class="section-label" for="bitrate-slider">LIMITE TOTAL DE VÍDEO</label>
-              <span class="bitrate-readout" id="bitrate-value-label">12.0 Mbps</span>
+              <span class="bitrate-readout" id="bitrate-value-label">8.0 Mbps</span>
             </div>
-            <input type="range" id="bitrate-slider" min="2500" max="25000" step="500" value="12000" />
+            <input type="range" id="bitrate-slider" min="2500" max="25000" step="500" value="8000" />
           </div>
         </div>
       </div>

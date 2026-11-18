@@ -2621,19 +2621,48 @@ body {
 }
 
 /* ==========================================================================
-   7. MODO HIBERNAÇÃO DE GPU DA INTERFACE DURANTE JOGOS PESADOS (EX: DEADLOCK)
+   7. MODO HIBERNAÇÃO DE GPU DA INTERFACE DURANTE JOGOS PESADOS E PLAYBACK 60FPS
    ========================================================================== */
 body.is-streaming-local *,
 body.is-streaming-local *::before,
-body.is-streaming-local *::after {
+body.is-streaming-local *::after,
+body.is-watching-stream .spotlight-wrapper *,
+body.is-watching-stream .discord-toast {
   animation: none !important;
   transition: none !important;
   backdrop-filter: none !important;
 }
 
-body.is-streaming-local .stage-control-dock {
-  background-color: rgba(24, 25, 29, 0.98) !important;
+body.is-streaming-local .stage-control-dock,
+body.is-watching-stream .stream-overlay-top,
+body.is-watching-stream .stream-overlay-bottom,
+body.is-watching-stream .rtc-telemetry-Hud {
+  background-color: rgba(20, 22, 29, 0.94) !important;
   box-shadow: none !important;
+}
+
+.zero-copy-info-card {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, rgba(35, 165, 90, 0.14), rgba(88, 101, 242, 0.14));
+  border: 1px solid rgba(87, 242, 135, 0.42);
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #f2f3f5;
+}
+
+.zero-copy-info-card strong {
+  color: #57f287;
+  font-size: 13.5px;
+}
+
+.zero-copy-info-card p {
+  font-size: 12.5px;
+  color: #dbdee1;
+  line-height: 1.45;
+  margin: 0;
 }
 
 .video-viewport {
