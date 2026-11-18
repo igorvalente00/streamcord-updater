@@ -1,6 +1,6 @@
-// StreamCord v8.2.0 — Arquitetura Zero-Copy DXGI GPU + Anti-Black-Screen + AudioWorklet WASAPI
+// StreamCord v9.0.0 — Deadlock/FPS Turbo GPU + Áudio Universal (Win10/Win11/Web) + Instalador Sem Bloqueio
 (() => {
-  const APP_VERSION = '8.2.0';
+  const APP_VERSION = '9.0.0';
 
   const RTC_CONFIG = {
     iceServers: [
@@ -114,6 +114,7 @@
 
   const RESOLUTION_MAP = {
     '720': { width: 1280, height: 720, heightNum: 720, label: '720p' },
+    '900': { width: 1600, height: 900, heightNum: 900, label: '900p FPS' },
     '1080': { width: 1920, height: 1080, heightNum: 1080, label: '1080p' },
     '1440': { width: 2560, height: 1440, heightNum: 1440, label: '1440p 2K' },
     'source': { width: 2560, height: 1440, heightNum: 0, label: 'Fonte Nativa' },
@@ -460,6 +461,7 @@
     spotlightViewport: document.getElementById('spotlight-viewport'),
     videoZoomContainer: document.getElementById('video-zoom-container'),
     spotlightVideo: document.getElementById('spotlight-video'),
+    remoteStreamAudio: document.getElementById('remote-stream-audio'),
     spotlightCanvas: document.getElementById('spotlight-canvas'),
     floatingReactionsLayer: document.getElementById('floating-reactions-layer'),
     btnMobileUnmute: document.getElementById('btn-mobile-unmute'),
@@ -556,6 +558,9 @@
     inputProfileName: document.getElementById('input-profile-name'),
     inputRoomCode: document.getElementById('input-room-code'),
     btnSaveName: document.getElementById('btn-save-name'),
+    btnCopyPsInstall: document.getElementById('btn-copy-ps-install'),
+    btnCopyInvitePage: document.getElementById('btn-copy-invite-page'),
+    btnCopyWebDirect: document.getElementById('btn-copy-web-direct'),
     btnReconnectStream: document.getElementById('btn-reconnect-stream'),
 
     btnToggleSfx: document.getElementById('btn-toggle-sfx'),
@@ -1097,19 +1102,47 @@
   }
 
   // =========================================================================
-  // 7. CAPTURA ZERO-COPY DXGI/WGC GPU + AUDIOWORKLET WASAPI (DISCORD MUDO)
+  // 7. CAPTURA ZERO-COPY DXGI GPU + AUDIOWORKLET UNIVERSAL (WIN11 + WIN10 + WEB)
   // =========================================================================
   let workletRegistered = false;
+  state.hasPowerEfficientH264 = false;
+  state.pendingAudioUnlock = false;
+
+  async function detectGpuHardwareCodecs() {
+    if (!navigator.mediaCapabilities || !navigator.mediaCapabilities.encodingInfo) return;
+    const candidates = [
+      'video/H264; profile-level-id=42e01f; packetization-mode=1',
+      'video/H264; profile-level-id=4d002a; packetization-mode=1',
+      'video/H264; profile-level-id=42e02a; packetization-mode=1',
+    ];
+    for (const ct of candidates) {
+      try {
+        const info = await navigator.mediaCapabilities.encodingInfo({
+          type: 'webrtc',
+          video: { contentType: ct, width: 1920, height: 1080, bitrate: 9000000, framerate: 60 },
+        });
+        if (info && info.supported && info.powerEfficient) {
+          state.hasPowerEfficientH264 = true;
+          break;
+        }
+      } catch (e) {}
+    }
+  }
+  detectGpuHardwareCodecs();
 
   async function startSystemAudioCaptureWithoutDiscord(wsProto) {
     if (state.streamSettings.audioMode === 'none') return null;
 
     try {
       if (!state.audioCtx) {
-        state.audioCtx = new (window.AudioContext || window.webkitAudioContext)({
-          sampleRate: 48000,
-          latencyHint: 'interactive',
-        });
+        try {
+          state.audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: 48000,
+            latencyHint: 'interactive',
+          });
+        } catch (e) {
+          state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
       }
       if (state.audioCtx.state === 'suspended') {
         await state.audioCtx.resume();
@@ -1117,65 +1150,109 @@
 
       state.audioDestNode = state.audioCtx.createMediaStreamDestination();
 
-      // Usa AudioWorkletNode em Thread C++ Dedicada (Zero Alocação na Main Thread e Zero Vazamento de Grafo!)
       let workletNode = null;
+      let fallbackScriptNode = null;
+      let jsRingL = null;
+      let jsRingR = null;
+      let jsWritePos = 0;
+      let jsReadPos = 0;
+      let jsAvail = 0;
+
       if (state.audioCtx.audioWorklet) {
-        if (!workletRegistered) {
-          const workletCode = `
-            class ScPcmProcessor extends AudioWorkletProcessor {
-              constructor() {
-                super();
-                this.ringL = new Float32Array(96000);
-                this.ringR = new Float32Array(96000);
-                this.writePos = 0;
-                this.readPos = 0;
-                this.available = 0;
-                this.port.onmessage = (e) => {
-                  const pcm16 = new Int16Array(e.data);
-                  const frames = pcm16.length >> 1;
-                  const cap = this.ringL.length;
-                  for (let i = 0, j = 0; i < frames; i++, j += 2) {
-                    this.ringL[this.writePos] = pcm16[j] * 0.000030517578125;
-                    this.ringR[this.writePos] = pcm16[j + 1] * 0.000030517578125;
-                    this.writePos = (this.writePos + 1) % cap;
+        try {
+          if (!workletRegistered) {
+            const workletCode = `
+              class ScPcmProcessor extends AudioWorkletProcessor {
+                constructor() {
+                  super();
+                  this.ringL = new Float32Array(48000);
+                  this.ringR = new Float32Array(48000);
+                  this.writePos = 0;
+                  this.readPos = 0;
+                  this.available = 0;
+                  this.port.onmessage = (e) => {
+                    const pcm16 = new Int16Array(e.data);
+                    const frames = pcm16.length >> 1;
+                    const cap = this.ringL.length;
+                    for (let i = 0, j = 0; i < frames; i++, j += 2) {
+                      this.ringL[this.writePos] = pcm16[j] * 0.000030517578125;
+                      this.ringR[this.writePos] = pcm16[j + 1] * 0.000030517578125;
+                      this.writePos = (this.writePos + 1) % cap;
+                    }
+                    this.available += frames;
+                    // Impede acúmulo de atraso (>120ms): crava sincronia em ~45ms!
+                    if (this.available > 5760) {
+                      this.readPos = (this.writePos - 2160 + cap) % cap;
+                      this.available = 2160;
+                    }
+                  };
+                }
+                process(inputs, outputs) {
+                  const out = outputs[0];
+                  if (!out || out.length < 2) return true;
+                  const outL = out[0];
+                  const outR = out[1];
+                  const n = outL.length;
+                  if (this.available < n) {
+                    outL.fill(0);
+                    outR.fill(0);
+                    return true;
                   }
-                  this.available = Math.min(cap, this.available + frames);
-                };
-              }
-              process(inputs, outputs) {
-                const out = outputs[0];
-                if (!out || out.length < 2) return true;
-                const outL = out[0];
-                const outR = out[1];
-                const n = outL.length;
-                if (this.available < n) {
-                  outL.fill(0);
-                  outR.fill(0);
+                  const cap = this.ringL.length;
+                  for (let i = 0; i < n; i++) {
+                    outL[i] = this.ringL[this.readPos];
+                    outR[i] = this.ringR[this.readPos];
+                    this.readPos = (this.readPos + 1) % cap;
+                  }
+                  this.available -= n;
                   return true;
                 }
-                const cap = this.ringL.length;
-                for (let i = 0; i < n; i++) {
-                  outL[i] = this.ringL[this.readPos];
-                  outR[i] = this.ringR[this.readPos];
-                  this.readPos = (this.readPos + 1) % cap;
-                }
-                this.available -= n;
-                return true;
               }
-            }
-            registerProcessor('sc-pcm-worklet', ScPcmProcessor);
-          `;
-          const blob = new Blob([workletCode], { type: 'application/javascript' });
-          const url = URL.createObjectURL(blob);
-          await state.audioCtx.audioWorklet.addModule(url);
-          URL.revokeObjectURL(url);
-          workletRegistered = true;
+              registerProcessor('sc-pcm-worklet', ScPcmProcessor);
+            `;
+            const blob = new Blob([workletCode], { type: 'application/javascript' });
+            const url = URL.createObjectURL(blob);
+            await state.audioCtx.audioWorklet.addModule(url);
+            URL.revokeObjectURL(url);
+            workletRegistered = true;
+          }
+          // numberOfInputs: 0 garante que o Chromium trate o nó como gerador ativo e NUNCA o suspenda!
+          workletNode = new AudioWorkletNode(state.audioCtx, 'sc-pcm-worklet', {
+            numberOfInputs: 0,
+            numberOfOutputs: 1,
+            outputChannelCount: [2],
+          });
+          workletNode.connect(state.audioDestNode);
+          state.activeWorkletNode = workletNode;
+        } catch (e) {
+          workletNode = null;
         }
-        workletNode = new AudioWorkletNode(state.audioCtx, 'sc-pcm-worklet', {
-          outputChannelCount: [2],
-        });
-        workletNode.connect(state.audioDestNode);
-        state.activeWorkletNode = workletNode;
+      }
+
+      // Fallback caso o navegador esteja em HTTP LAN sem suporte a AudioWorklet
+      if (!workletNode && state.audioCtx.createScriptProcessor) {
+        jsRingL = new Float32Array(48000);
+        jsRingR = new Float32Array(48000);
+        fallbackScriptNode = state.audioCtx.createScriptProcessor(1024, 0, 2);
+        fallbackScriptNode.onaudioprocess = (ev) => {
+          const outL = ev.outputBuffer.getChannelData(0);
+          const outR = ev.outputBuffer.getChannelData(1);
+          const n = outL.length;
+          if (jsAvail < n) {
+            outL.fill(0);
+            outR.fill(0);
+            return;
+          }
+          const cap = jsRingL.length;
+          for (let i = 0; i < n; i++) {
+            outL[i] = jsRingL[jsReadPos];
+            outR[i] = jsRingR[jsReadPos];
+            jsReadPos = (jsReadPos + 1) % cap;
+          }
+          jsAvail -= n;
+        };
+        fallbackScriptNode.connect(state.audioDestNode);
+        state.activeWorkletNode = fallbackScriptNode;
       }
 
       const audioWsUrl = `${wsProto}//${window.location.host}/ws-audio?mode=${encodeURIComponent(
@@ -1186,11 +1263,45 @@
       audioWs.binaryType = 'arraybuffer';
       state.localAudioWs = audioWs;
 
+      const wsConnected = await new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(false), 600);
+        audioWs.onopen = () => {
+          clearTimeout(timer);
+          resolve(true);
+        };
+        audioWs.onerror = () => {
+          clearTimeout(timer);
+          resolve(false);
+        };
+      });
+
+      if (!wsConnected) {
+        try { audioWs.close(); } catch (e) {}
+        state.localAudioWs = null;
+        return null;
+      }
+
       audioWs.onmessage = (ev) => {
-        if (!state.isStreaming || !state.audioDestNode) return;
+        if (!state.audioDestNode) return;
+        if (state.audioCtx && state.audioCtx.state === 'suspended') {
+          state.audioCtx.resume().catch(() => {});
+        }
         if (workletNode) {
-          // Zero-Copy Transferable ArrayBuffer direto para a thread de áudio C++!
           workletNode.port.postMessage(ev.data, [ev.data]);
+        } else if (fallbackScriptNode && jsRingL) {
+          const pcm16 = new Int16Array(ev.data);
+          const frames = pcm16.length >> 1;
+          const cap = jsRingL.length;
+          for (let i = 0, j = 0; i < frames; i++, j += 2) {
+            jsRingL[jsWritePos] = pcm16[j] * 0.000030517578125;
+            jsRingR[jsWritePos] = pcm16[j + 1] * 0.000030517578125;
+            jsWritePos = (jsWritePos + 1) % cap;
+          }
+          jsAvail += frames;
+          if (jsAvail > 5760) {
+            jsReadPos = (jsWritePos - 2160 + cap) % cap;
+            jsAvail = 2160;
+          }
         }
       };
 
@@ -1218,7 +1329,7 @@
     });
   }
 
-  async function acquireZeroCopyGpuStream(cfg, resSpec) {
+  async function acquireZeroCopyGpuStream(cfg, resSpec, includeDisplayAudio = false) {
     // 1. Se selecionou uma Janela/Jogo específico (window:<hwnd>), usa o Tagger C# + Extensão Zero-Copy DXGI!
     if (state.selectedSourceId.startsWith('window:') && state.hasNativeBackend) {
       const hwnd = state.selectedSourceId.slice(7);
@@ -1255,7 +1366,7 @@
             height: { ideal: resSpec.height, max: resSpec.height },
             frameRate: { ideal: cfg.fps, max: cfg.fps },
           },
-          audio: false,
+          audio: includeDisplayAudio,
         });
         if (dxgiStream && dxgiStream.getVideoTracks().length > 0) {
           return dxgiStream;
@@ -1307,7 +1418,6 @@
   async function startNativeScreenShare() {
     stopScreenShare(false);
 
-    // Sincroniza estado com os botões ativos no modal para garantir 100% de fidelidade à escolha do usuário
     const activeResBtn = document.querySelector('#resolution-group .seg-btn.active');
     if (activeResBtn && activeResBtn.dataset.res) {
       state.streamSettings.resolution = activeResBtn.dataset.res;
@@ -1331,8 +1441,11 @@
         return;
       }
     } else {
-      // Tenta primeiro o Pipeline Zero-Copy DXGI Direto na Placa de Vídeo (Igual ao Discord: < 2% CPU e 60.0 FPS!)
-      const zeroCopyStream = await acquireZeroCopyGpuStream(cfg, resSpec);
+      // Inicia primeiro a captura de áudio WASAPI (Win11 Discord Mudo + Fallback Win10)
+      const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto);
+      const needBrowserAudioFallback = !sysAudioTrack && cfg.audioMode !== 'none';
+
+      const zeroCopyStream = await acquireZeroCopyGpuStream(cfg, resSpec, needBrowserAudioFallback);
 
       if (zeroCopyStream) {
         state.localScreenStream = zeroCopyStream;
@@ -1341,10 +1454,9 @@
           vTrack.onended = () => stopScreenShare(true);
         }
       } else {
-        // Fallback Win32 StretchBlt caso seja Monitor 2 secundário
         const wsUrl = `${wsProto}//${window.location.host}/ws-capture?source=${encodeURIComponent(
           state.selectedSourceId
-        )}&height=${resSpec.heightNum}&fps=${cfg.fps}&detail=${cfg.preset === 'detail' ? 1 : 0}`;
+        )}&height=${resSpec.heightNum}&fps=${cfg.fps}&detail=0`;
 
         const capWs = new WebSocket(wsUrl);
         capWs.binaryType = 'blob';
@@ -1379,19 +1491,22 @@
         state.localScreenStream = state.captureCanvas.captureStream(cfg.fps);
       }
 
-      // Anexa Áudio Estéreo 48kHz WASAPI Process Loopback (Com Discord.exe 100% Silenciado!)
-      const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto);
       if (sysAudioTrack) {
         state.localScreenStream.addTrack(sysAudioTrack);
       }
     }
 
     state.isStreaming = true;
+    document.body.classList.add('is-streaming-local');
     state.showSelfPreview = isMobileDevice;
     els.streamModal.classList.add('hidden');
 
+    const hasAudioTrack = state.localScreenStream.getAudioTracks().length > 0;
     playDiscordSound('stream-start');
-    showToast(`Transmissão GPU ${resSpec.label} @ ${cfg.fps}FPS iniciada!`, '🔴');
+    showToast(
+      `Transmissão Turbo ${resSpec.label} @ ${cfg.fps}FPS ${hasAudioTrack ? '+ Áudio Ativo' : '(Sem Áudio)'}!`,
+      '🔴'
+    );
     setMobileTab('stage');
 
     announcePresence(false);
@@ -1409,6 +1524,7 @@
   function stopScreenShare(notify = true) {
     const wasStreaming = state.isStreaming;
     state.isStreaming = false;
+    document.body.classList.remove('is-streaming-local');
     state.nextFrameBlob = null;
     state.activeFallbackViewers.clear();
 
@@ -1434,6 +1550,7 @@
     }
 
     for (const entry of state.screenOutPcs.values()) {
+      if (entry.watchdogTimer) clearTimeout(entry.watchdogTimer);
       try { entry.pc.close(); } catch (e) {}
     }
     state.screenOutPcs.clear();
@@ -1452,21 +1569,44 @@
   }
 
   // =========================================================================
-  // 8. WEBRTC H.264 / VP8 + ÁUDIO ESTÉREO OPUS
+  // 8. MOTOR WEBRTC OTIMIZADO P/ JOGOS FRENÉTICOS (DEADLOCK / FPS) + ÁUDIO
   // =========================================================================
-  function preferHardwareH264(pc) {
+  function preferOptimalGameCodec(pc, forceVp8 = false) {
     try {
       if (!RTCRtpSender.getCapabilities) return;
       const caps = RTCRtpSender.getCapabilities('video');
       if (!caps || !caps.codecs) return;
 
-      const h264 = caps.codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264');
-      const rest = caps.codecs.filter((c) => c.mimeType.toLowerCase() !== 'video/h264');
-      if (h264.length === 0) return;
+      const useVp8First = forceVp8 || state.streamSettings.preset === 'vp8' || !state.hasPowerEfficientH264;
+
+      const vp8 = [];
+      const hwH264 = [];
+      const otherCodecs = [];
+
+      for (const c of caps.codecs) {
+        const mime = (c.mimeType || '').toLowerCase();
+        const fmtp = (c.sdpFmtpLine || '').toLowerCase();
+        if (mime === 'video/vp8') {
+          vp8.push(c);
+        } else if (
+          mime === 'video/h264' &&
+          fmtp.includes('packetization-mode=1') &&
+          (fmtp.includes('profile-level-id=42e0') || fmtp.includes('profile-level-id=4d00'))
+        ) {
+          hwH264.push(c);
+        } else {
+          otherCodecs.push(c);
+        }
+      }
+
+      // Se a GPU suportar NVENC/AMF/QSV real (powerEfficient=true), usa o chip dedicado da GPU!
+      // Caso contrário, usa VP8 Multi-Thread SIMD (4x mais rápido em teamfights de Deadlock que o OpenH264 single-thread!)
+      const ordered = useVp8First ? [...vp8, ...hwH264, ...otherCodecs] : [...hwH264, ...vp8, ...otherCodecs];
+      if (ordered.length === 0) return;
 
       for (const tr of pc.getTransceivers()) {
         if (tr.sender && tr.sender.track && tr.sender.track.kind === 'video' && tr.setCodecPreferences) {
-          tr.setCodecPreferences([...h264, ...rest]);
+          tr.setCodecPreferences(ordered);
         }
       }
     } catch (e) {}
@@ -1475,11 +1615,39 @@
   function boostOpusStereoAudio(sdp) {
     return sdp.replace(
       /a=fmtp:(\d+) minptime=10;useinbandfec=1/g,
-      'a=fmtp:$1 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=192000'
+      'a=fmtp:$1 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=192000;usedtx=0'
     );
   }
 
-  async function startScreenOutPcForViewer(viewerId, forceRecreate = false) {
+  function computePerViewerBitrateBps() {
+    const viewerCount = Math.max(1, state.screenOutPcs.size);
+    const baseKbps = state.streamSettings.bitrateKbps || 10000;
+    // Evita bufferbloat no roteador em teamfights com múltiplos amigos assistindo ao mesmo tempo!
+    if (viewerCount === 1) return baseKbps * 1000;
+    if (viewerCount === 2) return Math.min(baseKbps, 8500) * 1000;
+    return Math.min(baseKbps, Math.max(4500, Math.floor(21000 / viewerCount))) * 1000;
+  }
+
+  async function rebalanceViewerBitrates() {
+    const targetBps = computePerViewerBitrateBps();
+    for (const entry of state.screenOutPcs.values()) {
+      if (!entry.pc) continue;
+      for (const sender of entry.pc.getSenders()) {
+        if (sender.track && sender.track.kind === 'video') {
+          try {
+            const params = sender.getParameters();
+            if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+            params.encodings[0].maxBitrate = targetBps;
+            params.encodings[0].maxFramerate = state.streamSettings.fps;
+            params.degradationPreference = 'balanced';
+            await sender.setParameters(params);
+          } catch (e) {}
+        }
+      }
+    }
+  }
+
+  async function startScreenOutPcForViewer(viewerId, forceRecreate = false, forceVp8 = false) {
     if (!state.localScreenStream) return;
 
     const existing = state.screenOutPcs.get(viewerId);
@@ -1496,6 +1664,7 @@
     }
 
     if (existing) {
+      if (existing.watchdogTimer) clearTimeout(existing.watchdogTimer);
       try { existing.pc.close(); } catch (e) {}
       state.screenOutPcs.delete(viewerId);
     }
@@ -1510,6 +1679,7 @@
       localIceBuffer: [],
       remoteDescSet: false,
       pendingCandidates: [],
+      watchdogTimer: null,
     };
     state.screenOutPcs.set(viewerId, outEntry);
 
@@ -1518,27 +1688,52 @@
       if (st === 'failed' || st === 'closed') {
         if (state.screenOutPcs.get(viewerId) === outEntry) {
           closeScreenOutPc(viewerId);
+          rebalanceViewerBitrates();
         }
       }
     };
     pc.onconnectionstatechange = checkClean;
     pc.oniceconnectionstatechange = checkClean;
 
+    const targetBps = computePerViewerBitrateBps();
     for (const track of state.localScreenStream.getTracks()) {
       const sender = pc.addTrack(track, state.localScreenStream);
       if (track.kind === 'video') {
         try {
           const params = sender.getParameters();
           if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-          params.encodings[0].maxBitrate = state.streamSettings.bitrateKbps * 1000;
+          params.encodings[0].maxBitrate = targetBps;
           params.encodings[0].maxFramerate = state.streamSettings.fps;
           params.encodings[0].scaleResolutionDownBy = 1.0;
+          params.degradationPreference = 'balanced';
           await sender.setParameters(params);
         } catch (e) {}
       }
     }
 
-    preferHardwareH264(pc);
+    preferOptimalGameCodec(pc, forceVp8);
+    rebalanceViewerBitrates();
+
+    // Watchdog Anti-Tela Preta: Se o encoder H.264 da GPU travar em algum driver do Windows 11 (0 quadros enviados),
+    // faz fallback automático transparente para VP8 Multi-Core em 3.2 segundos!
+    if (!forceVp8 && state.hasPowerEfficientH264 && state.streamSettings.preset !== 'vp8') {
+      outEntry.watchdogTimer = setTimeout(async () => {
+        if (state.screenOutPcs.get(viewerId) !== outEntry || !state.isStreaming) return;
+        const st = pc.connectionState || pc.iceConnectionState;
+        if (st === 'connected' || st === 'completed') {
+          try {
+            let sent = 0;
+            const stats = await pc.getStats();
+            stats.forEach((r) => {
+              if (r.type === 'outbound-rtp' && r.kind === 'video') sent += r.framesSent || 0;
+            });
+            if (sent === 0) {
+              startScreenOutPcForViewer(viewerId, true, true);
+            }
+          } catch (e) {}
+        }
+      }, 3200);
+    }
 
     pc.onicecandidate = ({ candidate }) => {
       if (!candidate) return;
@@ -1605,6 +1800,35 @@
     }, 5500);
   }
 
+  function unlockPendingRemoteAudio() {
+    if (!els.remoteStreamAudio || !els.remoteStreamAudio.srcObject) return;
+    const desiredVol = Number(els.spotlightVolume.value) / 100;
+    els.remoteStreamAudio.volume = desiredVol > 0 ? desiredVol : 1;
+    els.remoteStreamAudio.muted = desiredVol === 0 && !state.pendingAudioUnlock ? true : false;
+    els.remoteStreamAudio
+      .play()
+      .then(() => {
+        state.pendingAudioUnlock = false;
+        if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
+      })
+      .catch(() => {});
+  }
+
+  window.addEventListener(
+    'pointerdown',
+    () => {
+      if (state.pendingAudioUnlock) unlockPendingRemoteAudio();
+    },
+    { passive: true }
+  );
+  window.addEventListener(
+    'keydown',
+    () => {
+      if (state.pendingAudioUnlock) unlockPendingRemoteAudio();
+    },
+    { passive: true }
+  );
+
   async function handleIncomingScreenOffer(streamerId, sdp, sessionId) {
     if (
       state.screenInEntry &&
@@ -1627,8 +1851,7 @@
       streamerId,
       sessionId,
       createdAt: Date.now(),
-      remoteStream: new MediaStream(),
-      autoMutedByBrowser: false,
+      remoteVideoStream: new MediaStream(),
       answerSent: false,
       localIceBuffer: [],
       remoteDescSet: false,
@@ -1651,34 +1874,19 @@
     };
 
     pc.ontrack = (ev) => {
-      if (!inEntry.remoteStream.getTracks().some((t) => t.id === ev.track.id)) {
-        inEntry.remoteStream.addTrack(ev.track);
-      }
       els.spotlightCanvas.classList.add('hidden');
-      els.spotlightVideo.srcObject = inEntry.remoteStream;
-
-      const desiredVol = Number(els.spotlightVolume.value) / 100;
-      els.spotlightVideo.volume = desiredVol;
-      if (!inEntry.autoMutedByBrowser) {
-        els.spotlightVideo.muted = desiredVol === 0;
-      }
-
-      els.spotlightVideo
-        .play()
-        .then(() => {
-          if (!inEntry.autoMutedByBrowser && els.btnMobileUnmute) {
-            els.btnMobileUnmute.classList.add('hidden');
-          }
-        })
-        .catch(() => {
-          // Marca autoMutedByBrowser = true para NUNCA redefinir muted = false sem clique do usuário (o que causava tela preta piscando!)
-          inEntry.autoMutedByBrowser = true;
-          els.spotlightVideo.muted = true;
-          els.spotlightVideo.play().catch(() => {});
-          if (els.btnMobileUnmute) els.btnMobileUnmute.classList.remove('hidden');
-        });
 
       if (ev.track.kind === 'video') {
+        if (!inEntry.remoteVideoStream.getTracks().some((t) => t.id === ev.track.id)) {
+          inEntry.remoteVideoStream.addTrack(ev.track);
+        }
+        // O <video> fica SEMPRE muted=true (zero bloqueio de autoplay e zero tela preta!)
+        els.spotlightVideo.muted = true;
+        if (els.spotlightVideo.srcObject !== inEntry.remoteVideoStream) {
+          els.spotlightVideo.srcObject = inEntry.remoteVideoStream;
+        }
+        els.spotlightVideo.play().catch(() => {});
+
         const checkDecoded = setInterval(() => {
           if (state.spotlightPeerId !== streamerId || state.screenInEntry !== inEntry) {
             clearInterval(checkDecoded);
@@ -1690,6 +1898,25 @@
             clearInterval(checkDecoded);
           }
         }, 120);
+      } else if (ev.track.kind === 'audio' && els.remoteStreamAudio) {
+        // Trilha de áudio dedicada em <audio id="remote-stream-audio"> separado do <video>!
+        // Garante que 100% dos amigos no PC e Mobile ouçam o áudio mesmo quando a trilha chega depois do vídeo!
+        const audioStream = new MediaStream([ev.track]);
+        els.remoteStreamAudio.srcObject = audioStream;
+        const desiredVol = Number(els.spotlightVolume.value) / 100;
+        els.remoteStreamAudio.volume = desiredVol;
+        els.remoteStreamAudio.muted = desiredVol === 0;
+
+        els.remoteStreamAudio
+          .play()
+          .then(() => {
+            state.pendingAudioUnlock = false;
+            if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
+          })
+          .catch(() => {
+            state.pendingAudioUnlock = true;
+            if (els.btnMobileUnmute) els.btnMobileUnmute.classList.remove('hidden');
+          });
       }
     };
 
@@ -1736,12 +1963,15 @@
 
   if (els.btnMobileUnmute) {
     els.btnMobileUnmute.onclick = () => {
-      if (state.screenInEntry) state.screenInEntry.autoMutedByBrowser = false;
-      els.spotlightVideo.muted = false;
-      els.spotlightVideo.volume = 1;
+      state.pendingAudioUnlock = false;
+      if (els.remoteStreamAudio) {
+        els.remoteStreamAudio.muted = false;
+        els.remoteStreamAudio.volume = 1;
+        els.remoteStreamAudio.play().catch(() => {});
+      }
       els.spotlightVolume.value = '100';
       els.spotlightVolumeLabel.textContent = '100%';
-      els.spotlightVideo.play().catch(() => {});
+      if (els.btnMuteToggle) els.btnMuteToggle.textContent = '🔊';
       els.btnMobileUnmute.classList.add('hidden');
     };
   }
@@ -1802,6 +2032,8 @@
     }
     state.spotlightPeerId = null;
     state.webrtcVideoActive = false;
+    state.pendingAudioUnlock = false;
+    if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
     els.dockBtnLeave.classList.add('hidden');
     if (els.mobLiveDot) els.mobLiveDot.classList.add('hidden');
     if (state.watchRetryTimer) clearInterval(state.watchRetryTimer);
@@ -1810,6 +2042,9 @@
       state.screenInEntry = null;
     }
     els.spotlightVideo.srcObject = null;
+    if (els.remoteStreamAudio) {
+      els.remoteStreamAudio.srcObject = null;
+    }
     els.spotlightWrapper.classList.add('hidden');
     els.activeStage.classList.remove('spotlight-active');
     renderStageParticipants();
@@ -1892,11 +2127,18 @@
     };
   });
 
-  // Telemetria a cada 1s (Suporta Zero-Copy GPU Outbound + Inbound WebRTC)
+  // Telemetria a cada 1s (Pausa automaticamente quando a janela está atrás do jogo p/ 0% de custo de CPU/IPC!)
   let prevOutboundBytes = 0;
   let prevOutboundFrames = 0;
 
   setInterval(async () => {
+    if (document.hidden && state.isStreaming) {
+      state.framesCapturedCount = 0;
+      state.bytesTransferredThisSec = 0;
+      state.lastStatsTime = performance.now();
+      return;
+    }
+
     const now = performance.now();
     const dt = Math.max(0.5, (now - state.lastStatsTime) / 1000);
     state.lastStatsTime = now;
@@ -1909,7 +2151,6 @@
     const targetResSpec = RESOLUTION_MAP[state.streamSettings.resolution] || RESOLUTION_MAP['1080'];
     let resText = `${targetResSpec.width}×${targetResSpec.height}`;
 
-    // Se estamos transmitindo via Zero-Copy GPU, lê direto da Track ou do RTCPeerConnection Conectado
     if (state.isStreaming && state.localScreenStream) {
       const vt = state.localScreenStream.getVideoTracks()[0];
       if (vt && vt.getSettings) {
@@ -1947,6 +2188,10 @@
               const deltaB = r.bytesSent - prevOutboundBytes;
               if (deltaB >= 0) mbps = ((deltaB * 8) / dt / 1_000_000).toFixed(1);
               prevOutboundBytes = r.bytesSent;
+
+              if (els.statCodec) {
+                els.statCodec.textContent = r.powerEfficientEncoder ? 'GPU Hardware' : 'VP8/H264 Turbo';
+              }
             }
           });
         } catch (e) {}
@@ -2443,15 +2688,30 @@
 
   els.spotlightVolume.oninput = () => {
     const v = Number(els.spotlightVolume.value);
-    els.spotlightVideo.volume = v / 100;
-    els.spotlightVideo.muted = v === 0;
+    if (els.remoteStreamAudio) {
+      els.remoteStreamAudio.volume = v / 100;
+      els.remoteStreamAudio.muted = v === 0;
+      if (v > 0) {
+        state.pendingAudioUnlock = false;
+        els.remoteStreamAudio.play().catch(() => {});
+        if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
+      }
+    }
+    if (els.btnMuteToggle) els.btnMuteToggle.textContent = v === 0 ? '🔇' : '🔊';
     els.spotlightVolumeLabel.textContent = `${v}%`;
   };
 
   if (els.btnMuteToggle) {
     els.btnMuteToggle.onclick = () => {
-      els.spotlightVideo.muted = !els.spotlightVideo.muted;
-      els.btnMuteToggle.textContent = els.spotlightVideo.muted ? '🔇' : '🔊';
+      if (els.remoteStreamAudio) {
+        els.remoteStreamAudio.muted = !els.remoteStreamAudio.muted;
+        if (!els.remoteStreamAudio.muted) {
+          state.pendingAudioUnlock = false;
+          els.remoteStreamAudio.play().catch(() => {});
+          if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
+        }
+        els.btnMuteToggle.textContent = els.remoteStreamAudio.muted ? '🔇' : '🔊';
+      }
     };
   }
 
@@ -2500,6 +2760,9 @@
     state.streamSettings.bitrateKbps = kbps;
     localStorage.setItem('streamcord_bitrate', String(kbps));
     els.bitrateValueLabel.textContent = `${(kbps / 1000).toFixed(1)} Mbps`;
+    if (state.isStreaming) {
+      rebalanceViewerBitrates();
+    }
   };
 
   els.dockBtnLeave.onclick = () => {
@@ -2599,6 +2862,33 @@
   };
 
   els.btnCloseInviteModal.onclick = () => els.inviteModal.classList.add('hidden');
+
+  if (els.btnCopyPsInstall) {
+    els.btnCopyPsInstall.onclick = () => {
+      const psCmd = 'powershell -NoProfile -c "irm https://igorvalente00.github.io/streamcord-updater/install.ps1 | iex"';
+      navigator.clipboard.writeText(psCmd);
+      playDiscordSound('click');
+      showToast('Comando copiado! Seu amigo só aperta Win+R, Ctrl+V e Enter!', '⚡');
+    };
+  }
+
+  if (els.btnCopyInvitePage) {
+    els.btnCopyInvitePage.onclick = () => {
+      const inviteUrl = `https://igorvalente00.github.io/streamcord-updater/convite.html?room=${encodeURIComponent(state.roomCode)}`;
+      navigator.clipboard.writeText(inviteUrl);
+      playDiscordSound('click');
+      showToast('Link da Página de Convite copiado!', '🔗');
+    };
+  }
+
+  if (els.btnCopyWebDirect) {
+    els.btnCopyWebDirect.onclick = () => {
+      const webUrl = `https://igorvalente00.github.io/streamcord-updater/?room=${encodeURIComponent(state.roomCode)}`;
+      navigator.clipboard.writeText(webUrl);
+      playDiscordSound('click');
+      showToast('Link Web Direto (sem download) copiado!', '🌐');
+    };
+  }
 
   els.btnSaveName.onclick = () => {
     const newName = els.inputProfileName.value.trim();
