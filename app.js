@@ -1,6 +1,6 @@
-// StreamCord v9.2.0 — Motor GPU High Profile 640032 (60 FPS Cravados) + Instalador 2 Cliques + Perfil Permanente
+// StreamCord v9.3.0 — Motor Nativo Embutido (Zero Navegador) + 60 FPS Cravados em Jogos (maintain-framerate)
 (() => {
-  const APP_VERSION = '9.2.0';
+  const APP_VERSION = '9.3.0';
 
   const RTC_CONFIG = {
     iceServers: [
@@ -1660,12 +1660,14 @@
       params.encodings[0].scaleResolutionDownBy = 1.0;
       params.encodings[0].priority = 'high';
       params.encodings[0].networkPriority = 'high';
+      params.degradationPreference = state.streamSettings.preset === 'detail' ? 'maintain-resolution' : 'maintain-framerate';
       try {
-        params.degradationPreference = 'maintain-framerate-and-resolution';
         await sender.setParameters(params);
       } catch (e) {
-        params.degradationPreference = 'maintain-resolution';
-        await sender.setParameters(params);
+        try {
+          params.degradationPreference = 'maintain-framerate';
+          await sender.setParameters(params);
+        } catch (e2) {}
       }
     } catch (e) {}
   }
