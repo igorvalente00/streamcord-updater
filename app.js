@@ -1,6 +1,6 @@
 // StreamCord v9.3.1 — Motor Nativo Embutido (Zero Navegador) + 60 FPS Cravados em Jogos (maintain-framerate) + Auto-Updater Corrigido
 (() => {
-  const APP_VERSION = '9.4.2';
+  const APP_VERSION = '9.5.0';
 
   const RTC_CONFIG = {
     iceServers: [
@@ -148,8 +148,11 @@
     sfxEnabled: localStorage.getItem('streamcord_sfx') !== '0',
 
     currentChannelId: 'gameplay-2k',
-    channels: DEFAULT_CHANNELS,
+    channels: JSON.parse(localStorage.getItem('streamcord_channels_' + (localStorage.getItem('streamcord_room') || 'IGOR-2K60').toUpperCase().trim()) || 'null') || DEFAULT_CHANNELS.map((c) => ({ ...c })),
     onlineUsers: new Map(),
+    bannedUsers: new Map(),
+    bannedFromRooms: new Set(),
+    locallyMutedUsers: new Set(),
 
     cloudMqtt: null,
     cloudConnected: false,
@@ -573,6 +576,17 @@
 
     btnToggleSfx: document.getElementById('btn-toggle-sfx'),
     sfxIconLabel: document.getElementById('sfx-icon-label'),
+    btnDisconnectCall: document.getElementById('btn-disconnect-call'),
+    avatarColorPicker: document.getElementById('avatar-color-picker'),
+
+    channelManagerModal: document.getElementById('channel-manager-modal'),
+    btnCloseChannelManager: document.getElementById('btn-close-channel-manager'),
+    newChannelEmoji: document.getElementById('new-channel-emoji'),
+    newChannelName: document.getElementById('new-channel-name'),
+    btnCreateChannel: document.getElementById('btn-create-channel'),
+    channelManagerList: document.getElementById('channel-manager-list'),
+    bannedUsersList: document.getElementById('banned-users-list'),
+    contextMenu: document.getElementById('discord-context-menu'),
 
     mobileBottomNav: document.getElementById('mobile-bottom-nav'),
     mobBtnShare: document.getElementById('mob-btn-share'),
@@ -893,6 +907,10 @@
       case 'presence': {
         const u = msg.user;
         if (!u || !u.id) return;
+        if (state.bannedUsers.has(u.id)) {
+          publishDirect(u.id, { type: 'mod-action', action: 'ban', by: state.username });
+          return;
+        }
         const prevUser = state.onlineUsers.get(u.id);
         const wasStreaming = Boolean(prevUser?.streaming);
         u.lastSeen = Date.now();
@@ -1009,6 +1027,43 @@
 
       case 'stop-watching': {
         closeScreenOutPc(msg.senderId);
+        break;
+      }
+
+      case 'channels-sync': {
+        if (Array.isArray(msg.channels) && msg.channels.length > 0) {
+          state.channels = msg.channels;
+          saveChannelsLocal();
+          if (state.currentChannelId && !state.channels.some((c) => c.id === state.currentChannelId)) {
+            state.currentChannelId = state.channels[0].id;
+            els.stageTitle.textContent = state.channels[0].name;
+            els.voiceCurrentChannelName.textContent = state.channels[0].name;
+          }
+          renderChannelsSidebar();
+          if (!els.channelManagerModal.classList.contains('hidden')) renderChannelManager();
+        }
+        break;
+      }
+
+      case 'mod-action': {
+        if (msg.action === 'kick') {
+          disconnectFromCall(false);
+          showToast(`Você foi expulso da chamada por ${msg.by || 'um moderador'}.`, '👢');
+        } else if (msg.action === 'ban') {
+          stopScreenShare(false);
+          closeSpotlight();
+          state.currentChannelId = null;
+          state.bannedFromRooms.add(state.roomCode);
+          if (state.cloudMqtt) {
+            state.cloudMqtt.close();
+            state.cloudMqtt = null;
+          }
+          state.cloudConnected = false;
+          state.onlineUsers.clear();
+          renderChannelsSidebar();
+          renderStageParticipants();
+          showToast(`Você foi banido da sala ${state.roomCode} por ${msg.by || 'um moderador'}.`, '🚫');
+        }
         break;
       }
 
@@ -2338,9 +2393,16 @@
   let lastStageSig = '';
 
   function computeStateSignature() {
-    const parts = [state.currentChannelId, state.spotlightPeerId || ''];
+    const chSig = state.channels.map((c) => `${c.id}:${c.name}`).join(',');
+    const parts = [
+      state.currentChannelId || 'NONE',
+      state.spotlightPeerId || '',
+      state.bannedFromRooms.has(state.roomCode) ? 'BANNED' : 'OK',
+      chSig,
+      [...state.locallyMutedUsers].join(','),
+    ];
     for (const u of state.onlineUsers.values()) {
-      parts.push(`${u.id}:${u.username}:${u.channelId}:${u.streaming ? 1 : 0}:${u.streamConfig?.resolution || ''}`);
+      parts.push(`${u.id}:${u.username}:${u.avatarColor}:${u.channelId}:${u.streaming ? 1 : 0}:${u.streamConfig?.resolution || ''}`);
     }
     return parts.join('|');
   }
@@ -2351,7 +2413,20 @@
     if (sig === lastSidebarSig) return;
     lastSidebarSig = sig;
 
-    els.channelsContainer.innerHTML = `<div class="category-label">SALAS DE TRANSMISSÃO DE TELA</div>`;
+    els.channelsContainer.innerHTML = `
+      <div class="category-header-row">
+        <div class="category-label">SALAS DE TRANSMISSÃO</div>
+        <div class="category-actions">
+          <button type="button" class="category-mini-btn" id="btn-cat-add-channel" title="Criar Novo Canal">+</button>
+          <button type="button" class="category-mini-btn" id="btn-cat-manage-channels" title="Gerenciar Canais e Servidor">⚙️</button>
+        </div>
+      </div>
+    `;
+
+    const btnCatAdd = document.getElementById('btn-cat-add-channel');
+    const btnCatMgr = document.getElementById('btn-cat-manage-channels');
+    if (btnCatAdd) btnCatAdd.onclick = () => openChannelManager(true);
+    if (btnCatMgr) btnCatMgr.onclick = () => openChannelManager(false);
 
     if (els.headerChannelPills) {
       els.headerChannelPills.innerHTML = '';
@@ -2375,9 +2450,10 @@
       const item = document.createElement('div');
       item.className = `channel-item ${isCurrent ? 'active' : ''}`;
       item.innerHTML = `
-        <div class="channel-name-wrap"><span>${ch.name}</span></div>
+        <div class="channel-name-wrap"><span>${escapeHtml(ch.name)}</span></div>
       `;
       item.onclick = () => switchChannel(ch.id);
+      item.oncontextmenu = (e) => openChannelContextMenu(e, ch);
       block.appendChild(item);
 
       if (usersInCh.length > 0) {
@@ -2397,6 +2473,7 @@
               ${u.streaming ? `<span class="live-pill-mini">AO VIVO</span>` : ''}
             </div>
           `;
+          uRow.oncontextmenu = (e) => openUserContextMenu(e, u);
           if (u.streaming) {
             uRow.style.cursor = 'pointer';
             uRow.onclick = () => {
@@ -2413,32 +2490,64 @@
   }
 
   function renderStageParticipants() {
-    if (!state.currentChannelId) return;
     const sig = computeStateSignature();
     if (sig === lastStageSig) return;
     lastStageSig = sig;
 
-    const users = getUsersInChannel(state.currentChannelId);
     els.participantsGrid.innerHTML = '';
+
+    if (state.bannedFromRooms.has(state.roomCode)) {
+      els.participantsGrid.dataset.count = '1';
+      els.participantsGrid.innerHTML = `
+        <div class="disconnected-stage-card">
+          <div style="font-size:32px;">🚫</div>
+          <h3>Você foi banido desta sala</h3>
+          <p style="font-size:12.5px;color:var(--text-muted);">Entre em outra sala usando o botão de código da sala no topo.</p>
+        </div>
+      `;
+      return;
+    }
+
+    if (!state.currentChannelId) {
+      els.participantsGrid.dataset.count = '1';
+      const firstCh = state.channels[0];
+      els.participantsGrid.innerHTML = `
+        <div class="disconnected-stage-card">
+          <div style="font-size:32px;">🎧</div>
+          <h3>Desconectado da chamada</h3>
+          <p style="font-size:12.5px;color:var(--text-muted);">Escolha um canal à esquerda ou clique abaixo para voltar.</p>
+          ${firstCh ? `<button type="button" class="btn-go-live" id="btn-rejoin-first-ch">Entrar em ${escapeHtml(firstCh.name)}</button>` : ''}
+        </div>
+      `;
+      const rejoinBtn = document.getElementById('btn-rejoin-first-ch');
+      if (rejoinBtn && firstCh) rejoinBtn.onclick = () => switchChannel(firstCh.id);
+      return;
+    }
+
+    const users = getUsersInChannel(state.currentChannelId);
+    const cnt = users.length;
+    els.participantsGrid.dataset.count = cnt <= 1 ? '1' : cnt === 2 ? '2' : cnt <= 4 ? '4' : 'many';
 
     users.forEach((u) => {
       const isMe = u.id === state.clientId;
+      const isLocallyMuted = state.locallyMutedUsers.has(u.id);
       const tile = document.createElement('div');
       tile.className = `participant-tile ${u.streaming ? 'streaming-tile' : ''}`;
+      tile.style.setProperty('--tile-tint', `${u.avatarColor || '#5865F2'}44`);
       const initial = (u.username || 'A')[0].toUpperCase();
 
       let badgeHtml = '';
       if (u.streaming) {
         const specText = u.streamConfig ? `${u.streamConfig.resolution} ${u.streamConfig.fps}FPS` : '1080p 60FPS';
-        badgeHtml = `<div class="watch-stream-cta">🔴 AO VIVO • ${specText} (Assistir)</div>`;
+        badgeHtml = `<div class="tile-live-corner">AO VIVO</div><div class="watch-stream-cta">Assistir • ${specText}</div>`;
       }
 
       tile.innerHTML = `
         <div class="tile-avatar" style="background:${u.avatarColor}">${initial}</div>
         ${badgeHtml}
         <div class="tile-name-bar">
-          <span>${escapeHtml(u.username)} ${isMe ? '(Você)' : ''}</span>
-          <span>${u.streaming ? '🖥️🔊' : '👀'}</span>
+          <span class="tile-name-pill">${escapeHtml(u.username)} ${isMe ? '(Você)' : ''}</span>
+          <span class="tile-status-icons">${isLocallyMuted ? '🔇' : u.streaming ? '🖥️🔊' : '🎧'}</span>
         </div>
       `;
 
@@ -2448,6 +2557,7 @@
           else watchFriendStream(u.id);
         }
       };
+      tile.oncontextmenu = (e) => openUserContextMenu(e, u);
       els.participantsGrid.appendChild(tile);
     });
   }
@@ -2683,6 +2793,8 @@
       els.mobileModal.classList.add('hidden');
       els.cmdModal.classList.add('hidden');
       els.inviteModal.classList.add('hidden');
+      if (els.channelManagerModal) els.channelManagerModal.classList.add('hidden');
+      hideContextMenu();
     }
   });
 
@@ -3078,6 +3190,373 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
   }
+
+  // =========================================================================
+  // 12. GERENCIADOR DE CANAIS, MODERAÇÃO, MENU BOTÃO DIREITO & COR DO AVATAR
+  // =========================================================================
+  function saveChannelsLocal() {
+    try {
+      localStorage.setItem('streamcord_channels_' + state.roomCode, JSON.stringify(state.channels));
+    } catch (e) {}
+  }
+
+  function syncChannelsBroadcast() {
+    saveChannelsLocal();
+    publishBroadcast({ type: 'channels-sync', channels: state.channels });
+    renderChannelsSidebar();
+    renderStageParticipants();
+    renderChannelManager();
+  }
+
+  function disconnectFromCall(notifyToast = true) {
+    if (state.isStreaming) stopScreenShare(false);
+    closeSpotlight();
+    state.currentChannelId = null;
+    els.stageTitle.textContent = 'Desconectado';
+    els.voiceCurrentChannelName.textContent = 'Fora da chamada';
+    playDiscordSound('stream-stop');
+    announcePresence(false);
+    renderChannelsSidebar();
+    renderStageParticipants();
+    if (notifyToast) showToast('Você saiu da chamada.', '🎧');
+  }
+
+  if (els.btnDisconnectCall) {
+    els.btnDisconnectCall.onclick = () => disconnectFromCall(true);
+  }
+
+  function renderAvatarColorPicker() {
+    if (!els.avatarColorPicker) return;
+    els.avatarColorPicker.innerHTML = '';
+    COLORS.forEach((col) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `color-swatch-btn ${state.avatarColor === col ? 'active' : ''}`;
+      btn.style.background = col;
+      btn.title = 'Escolher cor do card';
+      btn.onclick = () => {
+        state.avatarColor = col;
+        localStorage.setItem('streamcord_color', col);
+        renderAvatarColorPicker();
+        updateLocalProfileUI();
+        announcePresence(false);
+        saveProfileToServer();
+      };
+      els.avatarColorPicker.appendChild(btn);
+    });
+  }
+
+  const origOpenInvite = openInviteModal;
+  openInviteModal = function () {
+    origOpenInvite();
+    renderAvatarColorPicker();
+  };
+  els.btnInviteModal.onclick = openInviteModal;
+  els.btnHeaderInvite.onclick = openInviteModal;
+  els.btnEditProfile.onclick = openInviteModal;
+
+  function openChannelManager(focusInput = false, editChannelId = null) {
+    renderChannelManager(editChannelId);
+    els.channelManagerModal.classList.remove('hidden');
+    if (focusInput && els.newChannelName) {
+      setTimeout(() => els.newChannelName.focus(), 60);
+    }
+  }
+
+  if (els.btnCloseChannelManager) {
+    els.btnCloseChannelManager.onclick = () => els.channelManagerModal.classList.add('hidden');
+  }
+
+  function createNewChannel() {
+    const rawName = (els.newChannelName?.value || '').trim();
+    const emoji = els.newChannelEmoji?.value || '🎮';
+    if (!rawName) {
+      showToast('Digite um nome para o canal.', '⚠️');
+      return;
+    }
+    const id = 'ch_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 5);
+    const fullName = `${emoji} ${rawName.slice(0, 32)}`;
+    state.channels.push({ id, name: fullName, bitrate: '25 Mbps' });
+    els.newChannelName.value = '';
+    syncChannelsBroadcast();
+    playDiscordSound('join');
+    showToast(`Canal "${fullName}" criado!`, '✅');
+  }
+
+  if (els.btnCreateChannel) {
+    els.btnCreateChannel.onclick = createNewChannel;
+  }
+  if (els.newChannelName) {
+    els.newChannelName.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        createNewChannel();
+      }
+    };
+  }
+
+  function renderChannelManager(focusChannelId = null) {
+    if (!els.channelManagerList || !els.bannedUsersList) return;
+    els.channelManagerList.innerHTML = '';
+
+    state.channels.forEach((ch) => {
+      const row = document.createElement('div');
+      row.className = 'cm-row';
+
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.value = ch.name;
+      inp.maxLength = 38;
+
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'cm-btn';
+      saveBtn.textContent = 'Salvar';
+      saveBtn.onclick = () => {
+        const nextName = inp.value.trim();
+        if (!nextName) return;
+        ch.name = nextName;
+        if (state.currentChannelId === ch.id) {
+          els.stageTitle.textContent = nextName;
+          els.voiceCurrentChannelName.textContent = nextName;
+        }
+        syncChannelsBroadcast();
+        showToast(`Canal renomeado para "${nextName}"`, '✏️');
+      };
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'cm-btn danger';
+      delBtn.textContent = 'Excluir';
+      delBtn.onclick = () => {
+        if (state.channels.length <= 1) {
+          showToast('Mantenha pelo menos 1 canal no servidor.', '⚠️');
+          return;
+        }
+        state.channels = state.channels.filter((c) => c.id !== ch.id);
+        if (state.currentChannelId === ch.id) {
+          switchChannel(state.channels[0].id);
+        }
+        syncChannelsBroadcast();
+        showToast('Canal excluído.', '🗑️');
+      };
+
+      row.appendChild(inp);
+      row.appendChild(saveBtn);
+      row.appendChild(delBtn);
+      els.channelManagerList.appendChild(row);
+
+      if (focusChannelId && focusChannelId === ch.id) {
+        setTimeout(() => {
+          inp.focus();
+          inp.select();
+        }, 60);
+      }
+    });
+
+    els.bannedUsersList.innerHTML = '';
+    if (state.bannedUsers.size === 0) {
+      els.bannedUsersList.innerHTML = `<div style="font-size:12px;color:var(--text-muted);padding:8px;">Nenhum usuário banido nesta sala.</div>`;
+    } else {
+      for (const [uid, uname] of state.bannedUsers.entries()) {
+        const row = document.createElement('div');
+        row.className = 'cm-row';
+        row.innerHTML = `<span style="flex:1;font-size:12.5px;">🚫 ${escapeHtml(uname)}</span>`;
+        const unbanBtn = document.createElement('button');
+        unbanBtn.type = 'button';
+        unbanBtn.className = 'cm-btn';
+        unbanBtn.textContent = 'Desbanir';
+        unbanBtn.onclick = () => {
+          state.bannedUsers.delete(uid);
+          renderChannelManager();
+          showToast(`${uname} foi desbanido da sala.`, '✅');
+        };
+        row.appendChild(unbanBtn);
+        els.bannedUsersList.appendChild(row);
+      }
+    }
+  }
+
+  function kickUserFromCall(u) {
+    if (!u || u.id === state.clientId) return;
+    publishDirect(u.id, { type: 'mod-action', action: 'kick', by: state.username });
+    u.channelId = null;
+    u.streaming = false;
+    state.onlineUsers.set(u.id, u);
+    if (state.spotlightPeerId === u.id) closeSpotlight();
+    renderChannelsSidebar();
+    renderStageParticipants();
+    showToast(`${u.username} foi expulso da chamada.`, '👢');
+  }
+
+  function banUserFromServer(u) {
+    if (!u || u.id === state.clientId) return;
+    state.bannedUsers.set(u.id, u.username);
+    publishDirect(u.id, { type: 'mod-action', action: 'ban', by: state.username });
+    state.onlineUsers.delete(u.id);
+    if (state.spotlightPeerId === u.id) closeSpotlight();
+    renderChannelsSidebar();
+    renderStageParticipants();
+    showToast(`${u.username} foi banido da sala.`, '🚫');
+  }
+
+  function toggleLocalMuteUser(u) {
+    if (!u || u.id === state.clientId) return;
+    if (state.locallyMutedUsers.has(u.id)) {
+      state.locallyMutedUsers.delete(u.id);
+      if (state.spotlightPeerId === u.id && els.remoteStreamAudio) {
+        els.remoteStreamAudio.muted = false;
+      }
+      showToast(`Áudio de ${u.username} ativado para você.`, '🔊');
+    } else {
+      state.locallyMutedUsers.add(u.id);
+      if (state.spotlightPeerId === u.id && els.remoteStreamAudio) {
+        els.remoteStreamAudio.muted = true;
+      }
+      showToast(`${u.username} silenciado para você.`, '🔇');
+    }
+    renderStageParticipants();
+  }
+
+  // MENU DE CONTEXTO CUSTOMIZADO (BLOQUEIA O MENU FEIO DO NAVEGADOR)
+  function hideContextMenu() {
+    if (els.contextMenu) els.contextMenu.classList.add('hidden');
+  }
+
+  function showContextMenu(x, y, items) {
+    if (!els.contextMenu) return;
+    els.contextMenu.innerHTML = '';
+    items.forEach((it) => {
+      if (it.divider) {
+        const div = document.createElement('div');
+        div.className = 'ctx-divider';
+        els.contextMenu.appendChild(div);
+        return;
+      }
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `ctx-item ${it.danger ? 'danger' : ''}`;
+      btn.innerHTML = `<span>${escapeHtml(it.label)}</span>`;
+      btn.onclick = () => {
+        hideContextMenu();
+        it.action();
+      };
+      els.contextMenu.appendChild(btn);
+    });
+
+    els.contextMenu.classList.remove('hidden');
+    const rect = els.contextMenu.getBoundingClientRect();
+    const posX = Math.min(x, window.innerWidth - rect.width - 10);
+    const posY = Math.min(y, window.innerHeight - rect.height - 10);
+    els.contextMenu.style.left = `${Math.max(8, posX)}px`;
+    els.contextMenu.style.top = `${Math.max(8, posY)}px`;
+  }
+
+  function openChannelContextMenu(e, ch) {
+    e.preventDefault();
+    e.stopPropagation();
+    showContextMenu(e.clientX, e.clientY, [
+      { label: '✏️ Editar / Renomear Canal', action: () => openChannelManager(false, ch.id) },
+      { label: '➕ Criar Novo Canal', action: () => openChannelManager(true) },
+      {
+        label: '🔗 Copiar Link da Sala',
+        action: () => {
+          const url = `https://igorvalente00.github.io/streamcord-updater/convite.html?room=${encodeURIComponent(state.roomCode)}`;
+          navigator.clipboard.writeText(url);
+          showToast('Link da sala copiado!', '🔗');
+        },
+      },
+      { divider: true },
+      {
+        label: '🗑️ Excluir Canal',
+        danger: true,
+        action: () => {
+          if (state.channels.length <= 1) {
+            showToast('Mantenha pelo menos 1 canal no servidor.', '⚠️');
+            return;
+          }
+          state.channels = state.channels.filter((c) => c.id !== ch.id);
+          if (state.currentChannelId === ch.id) switchChannel(state.channels[0].id);
+          syncChannelsBroadcast();
+          showToast(`Canal "${ch.name}" excluído.`, '🗑️');
+        },
+      },
+    ]);
+  }
+
+  function openUserContextMenu(e, u) {
+    e.preventDefault();
+    e.stopPropagation();
+    const isMe = u.id === state.clientId;
+    const isMuted = state.locallyMutedUsers.has(u.id);
+    const items = [];
+
+    if (u.streaming) {
+      items.push({
+        label: '📺 Assistir Transmissão',
+        action: () => (isMe ? openSpotlight(state.clientId) : watchFriendStream(u.id)),
+      });
+    }
+
+    if (isMe) {
+      items.push({ label: '✏️ Editar Meu Apelido e Cor', action: openInviteModal });
+      if (state.currentChannelId) {
+        items.push({ divider: true });
+        items.push({ label: '📞 Desconectar da Chamada', danger: true, action: () => disconnectFromCall(true) });
+      }
+    } else {
+      items.push({
+        label: isMuted ? '🔊 Ativar Áudio Local' : '🔇 Silenciar para Mim',
+        action: () => toggleLocalMuteUser(u),
+      });
+      items.push({ divider: true });
+      items.push({ label: '👢 Expulsar da Chamada', danger: true, action: () => kickUserFromCall(u) });
+      items.push({ label: '🚫 Banir do Servidor', danger: true, action: () => banUserFromServer(u) });
+    }
+
+    showContextMenu(e.clientX, e.clientY, items);
+  }
+
+  document.addEventListener('click', hideContextMenu);
+  document.addEventListener('contextmenu', (e) => {
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return; // Mantém colar/copiar em campos de texto
+    e.preventDefault();
+
+    if (e.target.closest('#channels-container')) {
+      showContextMenu(e.clientX, e.clientY, [
+        { label: '➕ Criar Novo Canal', action: () => openChannelManager(true) },
+        { label: '⚙️ Gerenciar Canais e Servidor', action: () => openChannelManager(false) },
+      ]);
+      return;
+    }
+
+    if (e.target.closest('#chat-messages')) {
+      showContextMenu(e.clientX, e.clientY, [
+        {
+          label: '🧹 Limpar Chat Local',
+          action: () => {
+            els.chatMessages.innerHTML = '<div class="chat-welcome">Chat limpo localmente.</div>';
+          },
+        },
+        { label: '🔗 Copiar Código da Sala', action: () => navigator.clipboard.writeText(state.roomCode) },
+      ]);
+      return;
+    }
+
+    showContextMenu(e.clientX, e.clientY, [
+      { label: '🖥️ Compartilhar Tela + Áudio', action: handleShareButtonClick },
+      { label: '🎨 Trocar Modelo de Interface', action: openThemeModal },
+      { label: '⚙️ Gerenciar Canais', action: () => openChannelManager(false) },
+      {
+        label: `🔗 Copiar Sala (${state.roomCode})`,
+        action: () => {
+          navigator.clipboard.writeText(state.roomCode);
+          showToast(`Código ${state.roomCode} copiado!`, '🔗');
+        },
+      },
+    ]);
+  });
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
