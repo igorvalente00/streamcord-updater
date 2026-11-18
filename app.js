@@ -1,6 +1,6 @@
-// StreamCord v9.8.0 — Cloudflare Realtime TURN + Multi-Stream Simultânea + GPU Zero-Copy
+// StreamCord v9.8.1 — Cloudflare Realtime TURN + Trava de Cota 1000GB + Multi-Stream
 (() => {
-  const APP_VERSION = '9.8.0';
+  const APP_VERSION = '9.8.1';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -18,8 +18,144 @@
 
   let iceServersFetchedAt = 0;
   let iceServersPromise = null;
+  let turnQuotaState = {
+    month: '',
+    relayBytes: 0,
+    limitBytes: 1020054732800,
+    usedGb: 0,
+    limitGb: 950,
+    freeTierGb: 1000,
+    locked: false,
+  };
+
+  function triggerTurnQuotaLockScreen(info) {
+    if (info && typeof info === 'object') {
+      turnQuotaState = { ...turnQuotaState, ...info, locked: true };
+    } else {
+      turnQuotaState.locked = true;
+    }
+
+    try {
+      if (state.isStreaming) stopScreenShare(true);
+    } catch (_) {}
+    try {
+      for (const sid of Array.from(state.watchedStreams.keys())) {
+        closeWatchedStream(sid, true);
+      }
+    } catch (_) {}
+
+    let overlay = document.getElementById('turn-quota-lock-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'turn-quota-lock-overlay';
+      overlay.style.cssText =
+        'position:fixed;inset:0;z-index:999999;background:rgba(10,12,18,0.95);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:24px;color:#fff;font-family:inherit;';
+      overlay.innerHTML = `
+        <div style="max-width:520px;width:100%;background:#181a22;border:1px solid rgba(239,68,68,0.55);border-radius:16px;padding:28px;box-shadow:0 24px 64px rgba(0,0,0,0.65);text-align:center;">
+          <div style="font-size:42px;margin-bottom:12px;">⛔</div>
+          <h2 style="margin:0 0 10px;font-size:22px;color:#f87171;">Cota Gratuita Esgotada (1.000 GB/mês)</h2>
+          <p style="margin:0 0 14px;font-size:14px;line-height:1.55;color:#d1d5db;">
+            O teste/franquia gratuita mensal do <strong>Cloudflare Realtime TURN</strong> acabou neste mês
+            (trava automática de segurança acionada em <strong id="turn-quota-used-label">950 GB</strong> para impedir qualquer cobrança na sua conta).
+          </p>
+          <p style="margin:0 0 18px;font-size:13px;line-height:1.5;color:#9ca3af;">
+            O aplicativo foi travado automaticamente e só voltará a operar no dia <strong>1º do próximo mês</strong>, quando a franquia gratuita de 1.000 GB renovar.
+          </p>
+          <div style="display:inline-block;padding:8px 14px;border-radius:8px;background:rgba(239,68,68,0.14);border:1px solid rgba(239,68,68,0.35);font-size:12px;color:#fca5a5;">
+            Trava de Proteção Financeira Ativa • v${APP_VERSION}
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+    }
+    const usedEl = document.getElementById('turn-quota-used-label');
+    if (usedEl) {
+      usedEl.textContent = `${turnQuotaState.usedGb || 950} GB`;
+    }
+  }
+
+  async function ensureTurnQuotaChecked() {
+    try {
+      const res = await fetch('/api/turn-quota', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && typeof data === 'object') {
+        turnQuotaState = { ...turnQuotaState, ...data };
+        if (data.locked) {
+          triggerTurnQuotaLockScreen(data);
+        }
+      }
+    } catch (_) {}
+  }
+
+  async function pollTurnRelayUsage() {
+    if (turnQuotaState.locked) return;
+    const activeEntries = [];
+    for (const entry of state.screenOutPcs.values()) {
+      if (entry && entry.pc) activeEntries.push(entry);
+    }
+    for (const ws of state.watchedStreams.values()) {
+      if (ws && ws.inEntry && ws.inEntry.pc) activeEntries.push(ws.inEntry);
+    }
+    if (activeEntries.length === 0) return;
+
+    let deltaTotal = 0;
+    for (const entry of activeEntries) {
+      const pc = entry.pc;
+      const st = pc.connectionState || pc.iceConnectionState;
+      if (st !== 'connected' && st !== 'completed') continue;
+      try {
+        const stats = await pc.getStats();
+        let selectedPair = null;
+        stats.forEach((report) => {
+          if (report.type === 'candidate-pair' && (report.selected || (report.nominated && report.state === 'succeeded'))) {
+            selectedPair = report;
+          }
+        });
+        if (!selectedPair) continue;
+        const localCand = selectedPair.localCandidateId ? stats.get(selectedPair.localCandidateId) : null;
+        const remoteCand = selectedPair.remoteCandidateId ? stats.get(selectedPair.remoteCandidateId) : null;
+        const isRelay =
+          (localCand && localCand.candidateType === 'relay') ||
+          (remoteCand && remoteCand.candidateType === 'relay');
+        if (!isRelay) continue;
+
+        const currentRelayBytes = (selectedPair.bytesSent || 0) + (selectedPair.bytesReceived || 0);
+        const prevRelayBytes = entry._lastRelayBytes || 0;
+        if (currentRelayBytes > prevRelayBytes) {
+          deltaTotal += currentRelayBytes - prevRelayBytes;
+          entry._lastRelayBytes = currentRelayBytes;
+        }
+      } catch (_) {}
+    }
+
+    if (deltaTotal > 0) {
+      try {
+        const res = await fetch('/api/turn-quota', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ addBytes: deltaTotal }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          turnQuotaState = { ...turnQuotaState, ...data };
+          if (data.locked) {
+            triggerTurnQuotaLockScreen(data);
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  setInterval(() => {
+    void pollTurnRelayUsage();
+  }, 5000);
 
   async function ensureIceServersReady() {
+    if (turnQuotaState.locked) {
+      triggerTurnQuotaLockScreen(turnQuotaState);
+      return;
+    }
     if (iceServersFetchedAt > 0 && Date.now() - iceServersFetchedAt < 12 * 60 * 60 * 1000) {
       return;
     }
@@ -35,6 +171,10 @@
         });
         if (!res.ok) return;
         const data = await res.json();
+        if (data && data.quotaExceeded) {
+          triggerTurnQuotaLockScreen({ usedGb: 950, locked: true });
+          return;
+        }
         if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
           RTC_CONFIG.iceServers = [...data.iceServers, { urls: 'stun:stun.l.google.com:19302' }];
           if (!data.fallback) {
@@ -1630,6 +1770,11 @@
   }
 
   async function startNativeScreenShare() {
+    await ensureTurnQuotaChecked();
+    if (turnQuotaState.locked) {
+      triggerTurnQuotaLockScreen(turnQuotaState);
+      return;
+    }
     stopScreenShare(false);
 
     if (els.captureEngineSelect && els.captureEngineSelect.value) {
@@ -2331,6 +2476,10 @@
   }
 
   function watchFriendStream(streamerId, force = false) {
+    if (turnQuotaState.locked) {
+      triggerTurnQuotaLockScreen(turnQuotaState);
+      return;
+    }
     if (streamerId === state.clientId) {
       openSelfPreviewCard();
       setMobileTab('stage');
@@ -3993,6 +4142,7 @@
   updateLocalProfileUI();
   renderChannelsSidebar();
   loadProfileFromServer().finally(() => {
+    void ensureTurnQuotaChecked();
     void ensureIceServersReady();
     connectCloudSignaling();
   });
