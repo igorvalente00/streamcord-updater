@@ -1,6 +1,6 @@
-// StreamCord v9.3.0 — Motor Nativo Embutido (Zero Navegador) + 60 FPS Cravados em Jogos (maintain-framerate)
+// StreamCord v9.3.1 — Motor Nativo Embutido (Zero Navegador) + 60 FPS Cravados em Jogos (maintain-framerate) + Auto-Updater Corrigido
 (() => {
-  const APP_VERSION = '9.3.0';
+  const APP_VERSION = '9.3.1';
 
   const RTC_CONFIG = {
     iceServers: [
@@ -1145,6 +1145,8 @@
     }
   }
   detectGpuHardwareCodecs();
+  setTimeout(() => { if (!state.hasPowerEfficientH264) detectGpuHardwareCodecs(); }, 900);
+  setTimeout(() => { if (!state.hasPowerEfficientH264) detectGpuHardwareCodecs(); }, 2400);
 
   async function startSystemAudioCaptureWithoutDiscord(wsProto) {
     if (state.streamSettings.audioMode === 'none') return null;
@@ -2306,7 +2308,10 @@
       localStorage.setItem('streamcord_bitrate', String(state.streamSettings.bitrateKbps));
       saveProfileToServer();
       updateLocalProfileUI();
-      syncStreamModalControls();
+      const verTagEl = document.getElementById('sidebar-version-tag');
+  if (verTagEl) verTagEl.textContent = 'v' + APP_VERSION;
+  if (els.statLoss) els.statLoss.textContent = 'v' + APP_VERSION;
+  syncStreamModalControls();
     }
 
     announcePresence(true);
@@ -2690,7 +2695,10 @@
   }
 
   function openStreamPickerModal() {
-    syncStreamModalControls();
+    const verTagEl = document.getElementById('sidebar-version-tag');
+  if (verTagEl) verTagEl.textContent = 'v' + APP_VERSION;
+  if (els.statLoss) els.statLoss.textContent = 'v' + APP_VERSION;
+  syncStreamModalControls();
     els.streamModal.classList.remove('hidden');
     loadNativeSources();
   }
@@ -3040,7 +3048,10 @@
             }
           }
           updateLocalProfileUI();
-          syncStreamModalControls();
+          const verTagEl = document.getElementById('sidebar-version-tag');
+  if (verTagEl) verTagEl.textContent = 'v' + APP_VERSION;
+  if (els.statLoss) els.statLoss.textContent = 'v' + APP_VERSION;
+  syncStreamModalControls();
         }
       }
     } catch (e) {}
@@ -3058,6 +3069,9 @@
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
 
+  const verTagEl = document.getElementById('sidebar-version-tag');
+  if (verTagEl) verTagEl.textContent = 'v' + APP_VERSION;
+  if (els.statLoss) els.statLoss.textContent = 'v' + APP_VERSION;
   syncStreamModalControls();
   applyThemeModel(state.activeTheme, false);
   updateLocalProfileUI();
