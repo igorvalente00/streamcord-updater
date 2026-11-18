@@ -1,6 +1,6 @@
-// StreamCord v8.1.0 — Arquitetura Zero-Copy DXGI/WGC GPU + Hardware H.264 Lock + Anti-Black-Screen + AudioWorklet WASAPI
+// StreamCord v8.2.0 — Arquitetura Zero-Copy DXGI GPU + Anti-Black-Screen + AudioWorklet WASAPI
 (() => {
-  const APP_VERSION = '8.1.0';
+  const APP_VERSION = '8.2.0';
 
   const RTC_CONFIG = {
     iceServers: [
@@ -870,6 +870,9 @@
             user: getMyStateObject(),
             requestReplies: false,
           });
+          if (state.isStreaming && u.channelId === state.currentChannelId) {
+            await startScreenOutPcForViewer(u.id, false);
+          }
         }
 
         if (
@@ -1215,111 +1218,49 @@
     });
   }
 
-  async function lockVideoTrackResolutionAndFps(vTrack, resSpec, fps) {
-    if (!vTrack) return;
-    // Em Chromium WebRTC, contentHint = 'detail' força degradationPreference = 'maintain-resolution'
-    // impedindo que o VideoStreamAdapter mude a resolução sozinho (ex: de 1080p para 720p)!
-    try {
-      if ('contentHint' in vTrack) {
-        vTrack.contentHint = 'detail';
-      }
-    } catch (e) {}
-    try {
-      if (vTrack.applyConstraints && resSpec.heightNum > 0) {
-        await vTrack.applyConstraints({
-          width: { min: resSpec.width, ideal: resSpec.width, max: resSpec.width },
-          height: { min: resSpec.height, ideal: resSpec.height, max: resSpec.height },
-          frameRate: { min: fps, ideal: fps, max: fps },
-        });
-      }
-    } catch (e) {
-      try {
-        await vTrack.applyConstraints({
-          width: { ideal: resSpec.width, max: resSpec.width },
-          height: { ideal: resSpec.height, max: resSpec.height },
-          frameRate: { ideal: fps, max: fps },
-        });
-      } catch (e2) {}
-    }
-  }
-
   async function acquireZeroCopyGpuStream(cfg, resSpec) {
-    // 1. Se selecionou uma Janela/Jogo específico (window:<hwnd>), usa o Tagger C# + Extensão Zero-Copy WGC/DXGI!
+    // 1. Se selecionou uma Janela/Jogo específico (window:<hwnd>), usa o Tagger C# + Extensão Zero-Copy DXGI!
     if (state.selectedSourceId.startsWith('window:') && state.hasNativeBackend) {
       const hwnd = state.selectedSourceId.slice(7);
       try {
         await fetch('/api/prepare-window-capture?hwnd=' + encodeURIComponent(hwnd) + '&t=' + Date.now());
         const streamId = await requestExtensionZeroCopyStreamId('window');
         if (streamId) {
-          const mandatorySpec = {
-            chromeMediaSource: 'desktop',
-            chromeMediaSourceId: streamId,
-            maxWidth: resSpec.width,
-            maxHeight: resSpec.height,
-            minFrameRate: cfg.fps,
-            maxFrameRate: cfg.fps,
-          };
-          if (resSpec.heightNum > 0) {
-            mandatorySpec.minWidth = resSpec.width;
-            mandatorySpec.minHeight = resSpec.height;
-          }
           const wgcStream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: { mandatory: mandatorySpec },
+            video: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: streamId,
+                maxWidth: resSpec.width,
+                maxHeight: resSpec.height,
+                minFrameRate: cfg.fps,
+                maxFrameRate: cfg.fps,
+              },
+            },
           });
           if (wgcStream && wgcStream.getVideoTracks().length > 0) {
-            await lockVideoTrackResolutionAndFps(wgcStream.getVideoTracks()[0], resSpec, cfg.fps);
             return wgcStream;
           }
         }
       } catch (e) {}
     }
 
-    // 2. Se selecionou Tela 1 [Principal] (monitor:0) no Desktop, tenta primeiro via Extensão chromeMediaSource:'desktop' (que trava minWidth/maxWidth sem barra inferior!)
-    if (state.selectedSourceId === 'monitor:0' && state.hasNativeBackend) {
+    // 2. Se selecionou Tela 1 [Principal] (monitor:0) no Desktop, usa Zero-Copy DXGI Direto (getDisplayMedia)
+    if (state.selectedSourceId === 'monitor:0' && state.hasNativeBackend && navigator.mediaDevices?.getDisplayMedia) {
       try {
-        const screenStreamId = await requestExtensionZeroCopyStreamId('screen');
-        if (screenStreamId) {
-          const mandatoryScreen = {
-            chromeMediaSource: 'desktop',
-            chromeMediaSourceId: screenStreamId,
-            maxWidth: resSpec.width,
-            maxHeight: resSpec.height,
-            minFrameRate: cfg.fps,
-            maxFrameRate: cfg.fps,
-          };
-          if (resSpec.heightNum > 0) {
-            mandatoryScreen.minWidth = resSpec.width;
-            mandatoryScreen.minHeight = resSpec.height;
-          }
-          const extScreenStream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: { mandatory: mandatoryScreen },
-          });
-          if (extScreenStream && extScreenStream.getVideoTracks().length > 0) {
-            await lockVideoTrackResolutionAndFps(extScreenStream.getVideoTracks()[0], resSpec, cfg.fps);
-            return extScreenStream;
-          }
+        const dxgiStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            width: { ideal: resSpec.width, max: resSpec.width },
+            height: { ideal: resSpec.height, max: resSpec.height },
+            frameRate: { ideal: cfg.fps, max: cfg.fps },
+          },
+          audio: false,
+        });
+        if (dxgiStream && dxgiStream.getVideoTracks().length > 0) {
+          return dxgiStream;
         }
       } catch (e) {}
-
-      // Fallback getDisplayMedia Zero-Copy DXGI Direto
-      if (navigator.mediaDevices?.getDisplayMedia) {
-        try {
-          const dxgiStream = await navigator.mediaDevices.getDisplayMedia({
-            video: {
-              width: { ideal: resSpec.width, max: resSpec.width },
-              height: { ideal: resSpec.height, max: resSpec.height },
-              frameRate: { ideal: cfg.fps, max: cfg.fps },
-            },
-            audio: false,
-          });
-          if (dxgiStream && dxgiStream.getVideoTracks().length > 0) {
-            await lockVideoTrackResolutionAndFps(dxgiStream.getVideoTracks()[0], resSpec, cfg.fps);
-            return dxgiStream;
-          }
-        } catch (e) {}
-      }
     }
 
     return null;
@@ -1357,11 +1298,9 @@
 
     const vTrack = mediaStream.getVideoTracks()[0];
     if (vTrack) {
-      await lockVideoTrackResolutionAndFps(vTrack, resSpec, cfg.fps);
       vTrack.onended = () => stopScreenShare(true);
     }
 
-    // NUNCA desenha em <canvas> a 60Hz aqui! O MediaStream vai 100% Zero-Copy direto da GPU para o WebRTC!
     return mediaStream;
   }
 
@@ -1392,14 +1331,13 @@
         return;
       }
     } else {
-      // Tenta primeiro o Pipeline Zero-Copy DXGI/WGC Direto na Placa de Vídeo (Igual ao Discord: < 2% CPU e 60.0 FPS!)
+      // Tenta primeiro o Pipeline Zero-Copy DXGI Direto na Placa de Vídeo (Igual ao Discord: < 2% CPU e 60.0 FPS!)
       const zeroCopyStream = await acquireZeroCopyGpuStream(cfg, resSpec);
 
       if (zeroCopyStream) {
         state.localScreenStream = zeroCopyStream;
         const vTrack = zeroCopyStream.getVideoTracks()[0];
         if (vTrack) {
-          await lockVideoTrackResolutionAndFps(vTrack, resSpec, cfg.fps);
           vTrack.onended = () => stopScreenShare(true);
         }
       } else {
@@ -1439,10 +1377,6 @@
         };
 
         state.localScreenStream = state.captureCanvas.captureStream(cfg.fps);
-        const videoTrack = state.localScreenStream.getVideoTracks()[0];
-        if (videoTrack && 'contentHint' in videoTrack) {
-          videoTrack.contentHint = 'detail';
-        }
       }
 
       // Anexa Áudio Estéreo 48kHz WASAPI Process Loopback (Com Discord.exe 100% Silenciado!)
@@ -1518,7 +1452,7 @@
   }
 
   // =========================================================================
-  // 8. WEBRTC COM ACELERAÇÃO DE HARDWARE GPU H.264 (NVENC/AMF/QSV) + OPUS
+  // 8. WEBRTC H.264 / VP8 + ÁUDIO ESTÉREO OPUS
   // =========================================================================
   function preferHardwareH264(pc) {
     try {
@@ -1526,61 +1460,23 @@
       const caps = RTCRtpSender.getCapabilities('video');
       if (!caps || !caps.codecs) return;
 
-      // IMPORTANTE: No Chromium Windows, MediaFoundationVideoEncodeAccelerator (GPU NVENC/AMF/QSV)
-      // acelera especificamente packetization-mode=1 com profile-level-id=42e01f (Constrained Baseline)
-      // e 4d001f/4d0032 (Main). Já 42001f ou packetization-mode=0 cai no OpenH264 (CPU Software)!
-      const hwH264Primary = [];
-      const hwH264High = [];
-      const vp8OrVp9 = [];
-      const fallbackH264 = [];
-
-      for (const c of caps.codecs) {
-        const mime = (c.mimeType || '').toLowerCase();
-        const fmtp = (c.sdpFmtpLine || '').toLowerCase();
-        if (mime === 'video/h264') {
-          const isMode1 = fmtp.includes('packetization-mode=1');
-          if (isMode1 && (fmtp.includes('profile-level-id=42e0') || fmtp.includes('profile-level-id=4d00'))) {
-            hwH264Primary.push(c);
-          } else if (isMode1 && fmtp.includes('profile-level-id=64')) {
-            hwH264High.push(c);
-          } else {
-            fallbackH264.push(c);
-          }
-        } else if (mime === 'video/vp8' || mime === 'video/vp9' || mime === 'video/av1') {
-          vp8OrVp9.push(c);
-        } else {
-          fallbackH264.push(c);
-        }
-      }
-
-      const ordered = [...hwH264Primary, ...hwH264High, ...vp8OrVp9, ...fallbackH264];
-      if (ordered.length === 0) return;
+      const h264 = caps.codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264');
+      const rest = caps.codecs.filter((c) => c.mimeType.toLowerCase() !== 'video/h264');
+      if (h264.length === 0) return;
 
       for (const tr of pc.getTransceivers()) {
         if (tr.sender && tr.sender.track && tr.sender.track.kind === 'video' && tr.setCodecPreferences) {
-          tr.setCodecPreferences(ordered);
+          tr.setCodecPreferences([...h264, ...rest]);
         }
       }
     } catch (e) {}
   }
 
-  function boostSdpForUltraStream(sdp, bitrateKbps) {
-    const maxKbps = Math.max(4000, bitrateKbps || 12000);
-    const startKbps = Math.min(10000, Math.round(maxKbps * 0.8));
-    const minKbps = Math.min(4500, Math.round(maxKbps * 0.45));
-
-    // 1. Áudio Opus Estéreo 192 kbps
-    let out = sdp.replace(
+  function boostOpusStereoAudio(sdp) {
+    return sdp.replace(
       /a=fmtp:(\d+) minptime=10;useinbandfec=1/g,
       'a=fmtp:$1 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=192000'
     );
-
-    // 2. Força o WebRTC a iniciar imediatamente em alto bitrate (em vez de 300 kbps) para nunca derrubar a resolução!
-    out = out.replace(
-      /(a=fmtp:\d+ [^\r\n]*packetization-mode=1[^\r\n]*)/g,
-      `$1;x-google-max-bitrate=${maxKbps};x-google-min-bitrate=${minKbps};x-google-start-bitrate=${startKbps}`
-    );
-    return out;
   }
 
   async function startScreenOutPcForViewer(viewerId, forceRecreate = false) {
@@ -1593,9 +1489,9 @@
       if (
         st === 'connected' ||
         st === 'completed' ||
-        ((st === 'new' || st === 'connecting' || st === 'checking') && ageMs < 9000)
+        ((st === 'new' || st === 'connecting' || st === 'checking') && ageMs < 6000)
       ) {
-        return; // Já existe sessão ativa ou negociando para este amigo; evita destruir o handshake no meio!
+        return;
       }
     }
 
@@ -1617,7 +1513,6 @@
     };
     state.screenOutPcs.set(viewerId, outEntry);
 
-    // Limpa automaticamente se a conexão cair para nunca deixar encoder zumbi rodando na placa de vídeo!
     const checkClean = () => {
       const st = pc.connectionState || pc.iceConnectionState;
       if (st === 'failed' || st === 'closed') {
@@ -1638,10 +1533,6 @@
           params.encodings[0].maxBitrate = state.streamSettings.bitrateKbps * 1000;
           params.encodings[0].maxFramerate = state.streamSettings.fps;
           params.encodings[0].scaleResolutionDownBy = 1.0;
-          params.encodings[0].priority = 'high';
-          params.encodings[0].networkPriority = 'high';
-          // TRAVA A RESOLUÇÃO: Proíbe o WebRTC de alterar a resolução sozinho (ex: cair de 1080p/1440p para 720p)
-          params.degradationPreference = 'maintain-resolution';
           await sender.setParameters(params);
         } catch (e) {}
       }
@@ -1665,7 +1556,7 @@
 
     try {
       const offer = await pc.createOffer();
-      offer.sdp = boostSdpForUltraStream(offer.sdp, state.streamSettings.bitrateKbps);
+      offer.sdp = boostOpusStereoAudio(offer.sdp);
       await pc.setLocalDescription(offer);
 
       outEntry.offerSent = true;
@@ -1688,29 +1579,20 @@
   }
 
   function watchFriendStream(streamerId, force = false) {
-    if (
-      !force &&
-      state.spotlightPeerId === streamerId &&
-      state.screenInEntry &&
-      state.screenInEntry.streamerId === streamerId
-    ) {
-      const st = state.screenInEntry.pc.connectionState || state.screenInEntry.pc.iceConnectionState;
-      const ageMs = Date.now() - (state.screenInEntry.createdAt || 0);
-      if (
-        state.webrtcVideoActive ||
-        st === 'connected' ||
-        st === 'completed' ||
-        ((st === 'new' || st === 'connecting' || st === 'checking') && ageMs < 8500)
-      ) {
-        openSpotlight(streamerId);
-        return;
-      }
-    }
-
     openSpotlight(streamerId);
     setMobileTab('stage');
-    state.webrtcVideoActive = false;
 
+    if (
+      !force &&
+      state.screenInEntry &&
+      state.screenInEntry.streamerId === streamerId &&
+      state.webrtcVideoActive &&
+      els.spotlightVideo.videoWidth > 0
+    ) {
+      return;
+    }
+
+    state.webrtcVideoActive = false;
     publishDirect(streamerId, { type: 'watch-request', force });
 
     if (state.watchRetryTimer) clearInterval(state.watchRetryTimer);
@@ -1719,37 +1601,8 @@
         clearInterval(state.watchRetryTimer);
         return;
       }
-      const inPc = state.screenInEntry && state.screenInEntry.streamerId === streamerId ? state.screenInEntry.pc : null;
-      const iceSt = inPc ? inPc.iceConnectionState : 'none';
-      // Só pede reconexão se o ICE realmente falhou ou se após 6.5s ainda não recebeu vídeo
-      if (!inPc || iceSt === 'failed' || iceSt === 'disconnected' || iceSt === 'closed') {
-        publishDirect(streamerId, { type: 'watch-request', force: true });
-      } else {
-        publishDirect(streamerId, { type: 'watch-request', force: true });
-      }
-    }, 6500);
-  }
-
-  function tryPlaySpotlightVideo() {
-    els.spotlightCanvas.classList.add('hidden');
-    const desiredVol = Number(els.spotlightVolume.value) / 100;
-    els.spotlightVideo.volume = desiredVol;
-    els.spotlightVideo.muted = desiredVol === 0;
-
-    const playPromise = els.spotlightVideo.play();
-    if (playPromise !== undefined) {
-      playPromise
-        .then(() => {
-          if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
-        })
-        .catch(() => {
-          // Caso o navegador bloqueie autoplay com som (quando abre a live automático sem clique prévio),
-          // inicia o vídeo mutado imediatamente para NUNCA ficar com tela preta pausada!
-          els.spotlightVideo.muted = true;
-          els.spotlightVideo.play().catch(() => {});
-          if (els.btnMobileUnmute) els.btnMobileUnmute.classList.remove('hidden');
-        });
-    }
+      publishDirect(streamerId, { type: 'watch-request', force: true });
+    }, 5500);
   }
 
   async function handleIncomingScreenOffer(streamerId, sdp, sessionId) {
@@ -1775,6 +1628,7 @@
       sessionId,
       createdAt: Date.now(),
       remoteStream: new MediaStream(),
+      autoMutedByBrowser: false,
       answerSent: false,
       localIceBuffer: [],
       remoteDescSet: false,
@@ -1800,27 +1654,35 @@
       if (!inEntry.remoteStream.getTracks().some((t) => t.id === ev.track.id)) {
         inEntry.remoteStream.addTrack(ev.track);
       }
+      els.spotlightCanvas.classList.add('hidden');
+      els.spotlightVideo.srcObject = inEntry.remoteStream;
 
-      // Só atribui srcObject 1 única vez por sessão para que o 2º ontrack (áudio) não dê AbortError no vídeo!
-      if (els.spotlightVideo.srcObject !== inEntry.remoteStream) {
-        els.spotlightVideo.srcObject = inEntry.remoteStream;
-        els.spotlightVideo.onloadedmetadata = () => {
-          tryPlaySpotlightVideo();
-        };
+      const desiredVol = Number(els.spotlightVolume.value) / 100;
+      els.spotlightVideo.volume = desiredVol;
+      if (!inEntry.autoMutedByBrowser) {
+        els.spotlightVideo.muted = desiredVol === 0;
       }
-      tryPlaySpotlightVideo();
+
+      els.spotlightVideo
+        .play()
+        .then(() => {
+          if (!inEntry.autoMutedByBrowser && els.btnMobileUnmute) {
+            els.btnMobileUnmute.classList.add('hidden');
+          }
+        })
+        .catch(() => {
+          // Marca autoMutedByBrowser = true para NUNCA redefinir muted = false sem clique do usuário (o que causava tela preta piscando!)
+          inEntry.autoMutedByBrowser = true;
+          els.spotlightVideo.muted = true;
+          els.spotlightVideo.play().catch(() => {});
+          if (els.btnMobileUnmute) els.btnMobileUnmute.classList.remove('hidden');
+        });
 
       if (ev.track.kind === 'video') {
-        ev.track.onunmute = () => {
-          tryPlaySpotlightVideo();
-        };
         const checkDecoded = setInterval(() => {
           if (state.spotlightPeerId !== streamerId || state.screenInEntry !== inEntry) {
             clearInterval(checkDecoded);
             return;
-          }
-          if (els.spotlightVideo.paused && els.spotlightVideo.readyState >= 2) {
-            tryPlaySpotlightVideo();
           }
           if (els.spotlightVideo.videoWidth > 0 && els.spotlightVideo.readyState >= 2) {
             state.webrtcVideoActive = true;
@@ -1843,7 +1705,7 @@
       inEntry.pendingCandidates = [];
 
       const answer = await pc.createAnswer();
-      answer.sdp = boostSdpForUltraStream(answer.sdp, state.streamSettings.bitrateKbps);
+      answer.sdp = boostOpusStereoAudio(answer.sdp);
       await pc.setLocalDescription(answer);
 
       inEntry.answerSent = true;
@@ -1874,6 +1736,7 @@
 
   if (els.btnMobileUnmute) {
     els.btnMobileUnmute.onclick = () => {
+      if (state.screenInEntry) state.screenInEntry.autoMutedByBrowser = false;
       els.spotlightVideo.muted = false;
       els.spotlightVideo.volume = 1;
       els.spotlightVolume.value = '100';
@@ -2081,16 +1944,9 @@
                 if (df > 0) fps = Math.round(df / dt);
                 prevOutboundFrames = r.framesSent;
               }
-              if (r.frameWidth && r.frameHeight) resText = `${r.frameWidth}×${r.frameHeight}`;
               const deltaB = r.bytesSent - prevOutboundBytes;
               if (deltaB >= 0) mbps = ((deltaB * 8) / dt / 1_000_000).toFixed(1);
               prevOutboundBytes = r.bytesSent;
-
-              if (r.encoderImplementation && els.statCodec) {
-                els.statCodec.textContent = r.powerEfficientEncoder
-                  ? `GPU (${r.encoderImplementation})`
-                  : `H.264 (${r.encoderImplementation})`;
-              }
             }
           });
         } catch (e) {}
