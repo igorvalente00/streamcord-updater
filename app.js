@@ -1,16 +1,25 @@
-// StreamCord v8.0.0 — Arquitetura Zero-Copy DXGI/WGC GPU + AudioWorklet WASAPI (Discord Mudo) + 10 Temas + Mobile
+// StreamCord v8.1.0 — Arquitetura Zero-Copy DXGI/WGC GPU + Hardware H.264 Lock + Anti-Black-Screen + AudioWorklet WASAPI
 (() => {
-  const APP_VERSION = '8.0.0';
+  const APP_VERSION = '8.1.0';
 
   const RTC_CONFIG = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun.cloudflare.com:3478' },
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
     ],
     bundlePolicy: 'max-bundle',
+    iceCandidatePoolSize: 4,
   };
 
   const DEFAULT_CHANNELS = [
@@ -121,9 +130,17 @@
 
   const isMobileDevice = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth <= 900;
 
+  const savedClientId = localStorage.getItem('streamcord_client_id') || 'u_' + Math.random().toString(36).substring(2, 9);
+  localStorage.setItem('streamcord_client_id', savedClientId);
+
+  const savedUsername =
+    localStorage.getItem('streamcord_username') ||
+    (isMobileDevice ? 'Mobile#' : 'Amigo#') + Math.floor(1000 + Math.random() * 9000);
+  localStorage.setItem('streamcord_username', savedUsername);
+
   const state = {
-    clientId: 'u_' + Math.random().toString(36).substring(2, 9),
-    username: localStorage.getItem('streamcord_username') || (isMobileDevice ? 'Mobile#' : 'Amigo#') + Math.floor(1000 + Math.random() * 9000),
+    clientId: savedClientId,
+    username: savedUsername,
     avatarColor: localStorage.getItem('streamcord_color') || COLORS[Math.floor(Math.random() * COLORS.length)],
     roomCode: (localStorage.getItem('streamcord_room') || 'IGOR-2K60').toUpperCase().trim(),
     activeTheme: localStorage.getItem('streamcord_theme') || 'nitro-ultra',
@@ -156,17 +173,17 @@
     showSelfPreview: false,
 
     streamSettings: {
-      preset: 'motion',
-      resolution: '1080',
-      fps: 60,
-      bitrateKbps: 12000,
+      preset: localStorage.getItem('streamcord_preset') || 'motion',
+      resolution: localStorage.getItem('streamcord_res') || '1080',
+      fps: Number(localStorage.getItem('streamcord_fps')) || 60,
+      bitrateKbps: Number(localStorage.getItem('streamcord_bitrate')) || 12000,
       audioMode: 'pc_no_discord',
     },
 
     // Conexões WebRTC Dedicadas
     screenOutPcs: new Map(),
     screenInEntry: null,
-    earlyIceByPeer: new Map(),
+    earlyIceBySession: new Map(),
     webrtcVideoActive: false,
     watchRetryTimer: null,
     activeFallbackViewers: new Set(),
@@ -779,6 +796,15 @@
     }
   }
 
+  function closeScreenOutPc(viewerId) {
+    const entry = state.screenOutPcs.get(viewerId);
+    if (entry) {
+      try { entry.pc.close(); } catch (e) {}
+      state.screenOutPcs.delete(viewerId);
+    }
+    state.activeFallbackViewers.delete(viewerId);
+  }
+
   function announcePresence(requestReplies = false) {
     state.onlineUsers.set(state.clientId, getMyStateObject());
     publishBroadcast({
@@ -790,12 +816,20 @@
     renderStageParticipants();
   }
 
+  window.addEventListener('beforeunload', () => {
+    publishBroadcast({ type: 'user-left', userId: state.clientId });
+  });
+  window.addEventListener('pagehide', () => {
+    publishBroadcast({ type: 'user-left', userId: state.clientId });
+  });
+
   setInterval(() => {
     announcePresence(false);
     const now = Date.now();
     for (const [uid, u] of state.onlineUsers.entries()) {
-      if (uid !== state.clientId && now - (u.lastSeen || 0) > 12000) {
+      if (uid !== state.clientId && now - (u.lastSeen || 0) > 10500) {
         state.onlineUsers.delete(uid);
+        closeScreenOutPc(uid);
         if (state.spotlightPeerId === uid) closeSpotlight();
       }
     }
@@ -805,12 +839,30 @@
 
   async function handleCloudMessage(msg) {
     switch (msg.type) {
+      case 'user-left': {
+        const uid = msg.userId || msg.senderId;
+        if (uid && uid !== state.clientId) {
+          state.onlineUsers.delete(uid);
+          closeScreenOutPc(uid);
+          if (state.spotlightPeerId === uid) closeSpotlight();
+          renderChannelsSidebar();
+          renderStageParticipants();
+        }
+        break;
+      }
+
       case 'presence': {
         const u = msg.user;
         if (!u || !u.id) return;
-        const wasStreaming = state.onlineUsers.get(u.id)?.streaming;
+        const prevUser = state.onlineUsers.get(u.id);
+        const wasStreaming = Boolean(prevUser?.streaming);
         u.lastSeen = Date.now();
         state.onlineUsers.set(u.id, u);
+
+        // Se o amigo mudou de canal, fecha eventual encoder antigo dele
+        if (state.isStreaming && u.channelId !== state.currentChannelId) {
+          closeScreenOutPc(u.id);
+        }
 
         if (msg.requestReplies) {
           publishDirect(u.id, {
@@ -818,22 +870,20 @@
             user: getMyStateObject(),
             requestReplies: false,
           });
-          if (state.isStreaming && u.channelId === state.currentChannelId) {
-            await startScreenOutPcForViewer(u.id);
-          }
         }
 
         if (
           state.currentChannelId &&
           u.channelId === state.currentChannelId &&
           u.streaming &&
-          (!state.spotlightPeerId || state.spotlightPeerId === state.clientId || !wasStreaming)
+          !state.isStreaming &&
+          (!state.spotlightPeerId || !wasStreaming)
         ) {
           if (!wasStreaming) {
             playDiscordSound('stream-start');
             showToast(`${u.username} iniciou uma transmissão ao vivo!`, '🔴');
           }
-          watchFriendStream(u.id);
+          watchFriendStream(u.id, false);
         } else if (state.spotlightPeerId === u.id && (!u.streaming || u.channelId !== state.currentChannelId)) {
           closeSpotlight();
         }
@@ -845,13 +895,16 @@
 
       case 'watch-request': {
         if (state.isStreaming && state.localScreenStream) {
-          await startScreenOutPcForViewer(msg.senderId);
+          await startScreenOutPcForViewer(msg.senderId, Boolean(msg.force));
         }
         break;
       }
 
       case 'screen-offer': {
-        if (!state.spotlightPeerId || state.spotlightPeerId === state.clientId || state.spotlightPeerId === msg.senderId) {
+        if (
+          !state.isStreaming &&
+          (!state.spotlightPeerId || state.spotlightPeerId === state.clientId || state.spotlightPeerId === msg.senderId)
+        ) {
           openSpotlight(msg.senderId);
           await handleIncomingScreenOffer(msg.senderId, msg.sdp, msg.sessionId);
         }
@@ -860,7 +913,11 @@
 
       case 'screen-answer': {
         const outEntry = state.screenOutPcs.get(msg.senderId);
-        if (outEntry && outEntry.pc.signalingState !== 'stable') {
+        if (
+          outEntry &&
+          (!msg.sessionId || outEntry.sessionId === msg.sessionId) &&
+          outEntry.pc.signalingState !== 'stable'
+        ) {
           try {
             await outEntry.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
             outEntry.remoteDescSet = true;
@@ -875,7 +932,11 @@
 
       case 'screen-ice': {
         if (msg.role === 'from-streamer' && msg.candidate) {
-          if (state.screenInEntry && state.screenInEntry.streamerId === msg.senderId) {
+          if (
+            state.screenInEntry &&
+            state.screenInEntry.streamerId === msg.senderId &&
+            (!msg.sessionId || state.screenInEntry.sessionId === msg.sessionId)
+          ) {
             if (state.screenInEntry.remoteDescSet) {
               try {
                 await state.screenInEntry.pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
@@ -883,15 +944,15 @@
             } else {
               state.screenInEntry.pendingCandidates.push(msg.candidate);
             }
-          } else {
-            if (!state.earlyIceByPeer.has(msg.senderId)) {
-              state.earlyIceByPeer.set(msg.senderId, []);
+          } else if (msg.sessionId) {
+            if (!state.earlyIceBySession.has(msg.sessionId)) {
+              state.earlyIceBySession.set(msg.sessionId, []);
             }
-            state.earlyIceByPeer.get(msg.senderId).push(msg.candidate);
+            state.earlyIceBySession.get(msg.sessionId).push(msg.candidate);
           }
         } else if (msg.role === 'from-viewer' && msg.candidate) {
           const outEntry = state.screenOutPcs.get(msg.senderId);
-          if (outEntry) {
+          if (outEntry && (!msg.sessionId || outEntry.sessionId === msg.sessionId)) {
             if (outEntry.remoteDescSet) {
               try {
                 await outEntry.pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
@@ -904,34 +965,8 @@
         break;
       }
 
-      case 'request-relay-fallback': {
-        if (state.isStreaming) {
-          state.activeFallbackViewers.add(msg.senderId);
-          ensureFallbackRelayLoop();
-        }
-        break;
-      }
-
-      case 'stop-relay-fallback': {
-        state.activeFallbackViewers.delete(msg.senderId);
-        break;
-      }
-
-      case 'relay-frame': {
-        if (state.spotlightPeerId === msg.senderId && !state.webrtcVideoActive) {
-          const img = new Image();
-          img.onload = () => {
-            if (els.spotlightCanvas.width !== img.width || els.spotlightCanvas.height !== img.height) {
-              els.spotlightCanvas.width = img.width || 1280;
-              els.spotlightCanvas.height = img.height || 720;
-            }
-            els.spotlightCanvas.classList.remove('hidden');
-            spotlightCanvasCtx.drawImage(img, 0, 0);
-            state.framesCapturedCount++;
-            state.bytesTransferredThisSec += (msg.d ? msg.d.length * 0.75 : 25000);
-          };
-          img.src = msg.d;
-        }
+      case 'stop-watching': {
+        closeScreenOutPc(msg.senderId);
         break;
       }
 
@@ -1180,6 +1215,34 @@
     });
   }
 
+  async function lockVideoTrackResolutionAndFps(vTrack, resSpec, fps) {
+    if (!vTrack) return;
+    // Em Chromium WebRTC, contentHint = 'detail' força degradationPreference = 'maintain-resolution'
+    // impedindo que o VideoStreamAdapter mude a resolução sozinho (ex: de 1080p para 720p)!
+    try {
+      if ('contentHint' in vTrack) {
+        vTrack.contentHint = 'detail';
+      }
+    } catch (e) {}
+    try {
+      if (vTrack.applyConstraints && resSpec.heightNum > 0) {
+        await vTrack.applyConstraints({
+          width: { min: resSpec.width, ideal: resSpec.width, max: resSpec.width },
+          height: { min: resSpec.height, ideal: resSpec.height, max: resSpec.height },
+          frameRate: { min: fps, ideal: fps, max: fps },
+        });
+      }
+    } catch (e) {
+      try {
+        await vTrack.applyConstraints({
+          width: { ideal: resSpec.width, max: resSpec.width },
+          height: { ideal: resSpec.height, max: resSpec.height },
+          frameRate: { ideal: fps, max: fps },
+        });
+      } catch (e2) {}
+    }
+  }
+
   async function acquireZeroCopyGpuStream(cfg, resSpec) {
     // 1. Se selecionou uma Janela/Jogo específico (window:<hwnd>), usa o Tagger C# + Extensão Zero-Copy WGC/DXGI!
     if (state.selectedSourceId.startsWith('window:') && state.hasNativeBackend) {
@@ -1188,41 +1251,75 @@
         await fetch('/api/prepare-window-capture?hwnd=' + encodeURIComponent(hwnd) + '&t=' + Date.now());
         const streamId = await requestExtensionZeroCopyStreamId('window');
         if (streamId) {
+          const mandatorySpec = {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: streamId,
+            maxWidth: resSpec.width,
+            maxHeight: resSpec.height,
+            minFrameRate: cfg.fps,
+            maxFrameRate: cfg.fps,
+          };
+          if (resSpec.heightNum > 0) {
+            mandatorySpec.minWidth = resSpec.width;
+            mandatorySpec.minHeight = resSpec.height;
+          }
           const wgcStream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: {
-              mandatory: {
-                chromeMediaSource: 'desktop',
-                chromeMediaSourceId: streamId,
-                maxWidth: resSpec.width,
-                maxHeight: resSpec.height,
-                minFrameRate: cfg.fps,
-                maxFrameRate: cfg.fps,
-              },
-            },
+            video: { mandatory: mandatorySpec },
           });
           if (wgcStream && wgcStream.getVideoTracks().length > 0) {
+            await lockVideoTrackResolutionAndFps(wgcStream.getVideoTracks()[0], resSpec, cfg.fps);
             return wgcStream;
           }
         }
       } catch (e) {}
     }
 
-    // 2. Se selecionou Tela 1 [Principal] (monitor:0) no Desktop, usa Zero-Copy DXGI Direto (Auto-Selected sem Popup!)
-    if (state.selectedSourceId === 'monitor:0' && state.hasNativeBackend && navigator.mediaDevices?.getDisplayMedia) {
+    // 2. Se selecionou Tela 1 [Principal] (monitor:0) no Desktop, tenta primeiro via Extensão chromeMediaSource:'desktop' (que trava minWidth/maxWidth sem barra inferior!)
+    if (state.selectedSourceId === 'monitor:0' && state.hasNativeBackend) {
       try {
-        const dxgiStream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            width: { ideal: resSpec.width, max: resSpec.width },
-            height: { ideal: resSpec.height, max: resSpec.height },
-            frameRate: { ideal: cfg.fps, max: cfg.fps },
-          },
-          audio: false,
-        });
-        if (dxgiStream && dxgiStream.getVideoTracks().length > 0) {
-          return dxgiStream;
+        const screenStreamId = await requestExtensionZeroCopyStreamId('screen');
+        if (screenStreamId) {
+          const mandatoryScreen = {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: screenStreamId,
+            maxWidth: resSpec.width,
+            maxHeight: resSpec.height,
+            minFrameRate: cfg.fps,
+            maxFrameRate: cfg.fps,
+          };
+          if (resSpec.heightNum > 0) {
+            mandatoryScreen.minWidth = resSpec.width;
+            mandatoryScreen.minHeight = resSpec.height;
+          }
+          const extScreenStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { mandatory: mandatoryScreen },
+          });
+          if (extScreenStream && extScreenStream.getVideoTracks().length > 0) {
+            await lockVideoTrackResolutionAndFps(extScreenStream.getVideoTracks()[0], resSpec, cfg.fps);
+            return extScreenStream;
+          }
         }
       } catch (e) {}
+
+      // Fallback getDisplayMedia Zero-Copy DXGI Direto
+      if (navigator.mediaDevices?.getDisplayMedia) {
+        try {
+          const dxgiStream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+              width: { ideal: resSpec.width, max: resSpec.width },
+              height: { ideal: resSpec.height, max: resSpec.height },
+              frameRate: { ideal: cfg.fps, max: cfg.fps },
+            },
+            audio: false,
+          });
+          if (dxgiStream && dxgiStream.getVideoTracks().length > 0) {
+            await lockVideoTrackResolutionAndFps(dxgiStream.getVideoTracks()[0], resSpec, cfg.fps);
+            return dxgiStream;
+          }
+        } catch (e) {}
+      }
     }
 
     return null;
@@ -1260,6 +1357,7 @@
 
     const vTrack = mediaStream.getVideoTracks()[0];
     if (vTrack) {
+      await lockVideoTrackResolutionAndFps(vTrack, resSpec, cfg.fps);
       vTrack.onended = () => stopScreenShare(true);
     }
 
@@ -1269,6 +1367,18 @@
 
   async function startNativeScreenShare() {
     stopScreenShare(false);
+
+    // Sincroniza estado com os botões ativos no modal para garantir 100% de fidelidade à escolha do usuário
+    const activeResBtn = document.querySelector('#resolution-group .seg-btn.active');
+    if (activeResBtn && activeResBtn.dataset.res) {
+      state.streamSettings.resolution = activeResBtn.dataset.res;
+      localStorage.setItem('streamcord_res', state.streamSettings.resolution);
+    }
+    const activeFpsBtn = document.querySelector('#fps-group .seg-btn.active');
+    if (activeFpsBtn && activeFpsBtn.dataset.fps) {
+      state.streamSettings.fps = Number(activeFpsBtn.dataset.fps);
+      localStorage.setItem('streamcord_fps', String(state.streamSettings.fps));
+    }
 
     const cfg = state.streamSettings;
     const resSpec = RESOLUTION_MAP[cfg.resolution] || RESOLUTION_MAP['1080'];
@@ -1289,13 +1399,11 @@
         state.localScreenStream = zeroCopyStream;
         const vTrack = zeroCopyStream.getVideoTracks()[0];
         if (vTrack) {
-          if ('contentHint' in vTrack) {
-            vTrack.contentHint = cfg.preset === 'detail' ? 'detail' : 'motion';
-          }
+          await lockVideoTrackResolutionAndFps(vTrack, resSpec, cfg.fps);
           vTrack.onended = () => stopScreenShare(true);
         }
       } else {
-        // Fallback Win32 StretchBlt caso seja Monitor 2 secundário sem extensão
+        // Fallback Win32 StretchBlt caso seja Monitor 2 secundário
         const wsUrl = `${wsProto}//${window.location.host}/ws-capture?source=${encodeURIComponent(
           state.selectedSourceId
         )}&height=${resSpec.heightNum}&fps=${cfg.fps}&detail=${cfg.preset === 'detail' ? 1 : 0}`;
@@ -1333,7 +1441,7 @@
         state.localScreenStream = state.captureCanvas.captureStream(cfg.fps);
         const videoTrack = state.localScreenStream.getVideoTracks()[0];
         if (videoTrack && 'contentHint' in videoTrack) {
-          videoTrack.contentHint = cfg.preset === 'detail' ? 'detail' : 'motion';
+          videoTrack.contentHint = 'detail';
         }
       }
 
@@ -1349,7 +1457,7 @@
     els.streamModal.classList.add('hidden');
 
     playDiscordSound('stream-start');
-    showToast('Transmissão Zero-Copy GPU 60FPS iniciada!', '🔴');
+    showToast(`Transmissão GPU ${resSpec.label} @ ${cfg.fps}FPS iniciada!`, '🔴');
     setMobileTab('stage');
 
     announcePresence(false);
@@ -1359,7 +1467,7 @@
     const peersInRoom = getUsersInChannel(state.currentChannelId);
     for (const u of peersInRoom) {
       if (u.id !== state.clientId) {
-        startScreenOutPcForViewer(u.id);
+        startScreenOutPcForViewer(u.id, false);
       }
     }
   }
@@ -1410,7 +1518,7 @@
   }
 
   // =========================================================================
-  // 8. WEBRTC COM ACELERAÇÃO DE HARDWARE GPU H.264 + ÁUDIO ESTÉREO OPUS
+  // 8. WEBRTC COM ACELERAÇÃO DE HARDWARE GPU H.264 (NVENC/AMF/QSV) + OPUS
   // =========================================================================
   function preferHardwareH264(pc) {
     try {
@@ -1418,29 +1526,82 @@
       const caps = RTCRtpSender.getCapabilities('video');
       if (!caps || !caps.codecs) return;
 
-      const h264 = caps.codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264');
-      const rest = caps.codecs.filter((c) => c.mimeType.toLowerCase() !== 'video/h264');
-      if (h264.length === 0) return;
+      // IMPORTANTE: No Chromium Windows, MediaFoundationVideoEncodeAccelerator (GPU NVENC/AMF/QSV)
+      // acelera especificamente packetization-mode=1 com profile-level-id=42e01f (Constrained Baseline)
+      // e 4d001f/4d0032 (Main). Já 42001f ou packetization-mode=0 cai no OpenH264 (CPU Software)!
+      const hwH264Primary = [];
+      const hwH264High = [];
+      const vp8OrVp9 = [];
+      const fallbackH264 = [];
+
+      for (const c of caps.codecs) {
+        const mime = (c.mimeType || '').toLowerCase();
+        const fmtp = (c.sdpFmtpLine || '').toLowerCase();
+        if (mime === 'video/h264') {
+          const isMode1 = fmtp.includes('packetization-mode=1');
+          if (isMode1 && (fmtp.includes('profile-level-id=42e0') || fmtp.includes('profile-level-id=4d00'))) {
+            hwH264Primary.push(c);
+          } else if (isMode1 && fmtp.includes('profile-level-id=64')) {
+            hwH264High.push(c);
+          } else {
+            fallbackH264.push(c);
+          }
+        } else if (mime === 'video/vp8' || mime === 'video/vp9' || mime === 'video/av1') {
+          vp8OrVp9.push(c);
+        } else {
+          fallbackH264.push(c);
+        }
+      }
+
+      const ordered = [...hwH264Primary, ...hwH264High, ...vp8OrVp9, ...fallbackH264];
+      if (ordered.length === 0) return;
 
       for (const tr of pc.getTransceivers()) {
         if (tr.sender && tr.sender.track && tr.sender.track.kind === 'video' && tr.setCodecPreferences) {
-          tr.setCodecPreferences([...h264, ...rest]);
+          tr.setCodecPreferences(ordered);
         }
       }
     } catch (e) {}
   }
 
-  function boostOpusStereoAudio(sdp) {
-    return sdp.replace(
+  function boostSdpForUltraStream(sdp, bitrateKbps) {
+    const maxKbps = Math.max(4000, bitrateKbps || 12000);
+    const startKbps = Math.min(10000, Math.round(maxKbps * 0.8));
+    const minKbps = Math.min(4500, Math.round(maxKbps * 0.45));
+
+    // 1. Áudio Opus Estéreo 192 kbps
+    let out = sdp.replace(
       /a=fmtp:(\d+) minptime=10;useinbandfec=1/g,
       'a=fmtp:$1 minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxaveragebitrate=192000'
     );
+
+    // 2. Força o WebRTC a iniciar imediatamente em alto bitrate (em vez de 300 kbps) para nunca derrubar a resolução!
+    out = out.replace(
+      /(a=fmtp:\d+ [^\r\n]*packetization-mode=1[^\r\n]*)/g,
+      `$1;x-google-max-bitrate=${maxKbps};x-google-min-bitrate=${minKbps};x-google-start-bitrate=${startKbps}`
+    );
+    return out;
   }
 
-  async function startScreenOutPcForViewer(viewerId) {
+  async function startScreenOutPcForViewer(viewerId, forceRecreate = false) {
     if (!state.localScreenStream) return;
-    if (state.screenOutPcs.has(viewerId)) {
-      try { state.screenOutPcs.get(viewerId).pc.close(); } catch (e) {}
+
+    const existing = state.screenOutPcs.get(viewerId);
+    if (existing && !forceRecreate) {
+      const ageMs = Date.now() - (existing.createdAt || 0);
+      const st = existing.pc.connectionState || existing.pc.iceConnectionState;
+      if (
+        st === 'connected' ||
+        st === 'completed' ||
+        ((st === 'new' || st === 'connecting' || st === 'checking') && ageMs < 9000)
+      ) {
+        return; // Já existe sessão ativa ou negociando para este amigo; evita destruir o handshake no meio!
+      }
+    }
+
+    if (existing) {
+      try { existing.pc.close(); } catch (e) {}
+      state.screenOutPcs.delete(viewerId);
     }
 
     const sessionId = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
@@ -1448,12 +1609,25 @@
     const outEntry = {
       pc,
       sessionId,
+      createdAt: Date.now(),
       offerSent: false,
       localIceBuffer: [],
       remoteDescSet: false,
       pendingCandidates: [],
     };
     state.screenOutPcs.set(viewerId, outEntry);
+
+    // Limpa automaticamente se a conexão cair para nunca deixar encoder zumbi rodando na placa de vídeo!
+    const checkClean = () => {
+      const st = pc.connectionState || pc.iceConnectionState;
+      if (st === 'failed' || st === 'closed') {
+        if (state.screenOutPcs.get(viewerId) === outEntry) {
+          closeScreenOutPc(viewerId);
+        }
+      }
+    };
+    pc.onconnectionstatechange = checkClean;
+    pc.oniceconnectionstatechange = checkClean;
 
     for (const track of state.localScreenStream.getTracks()) {
       const sender = pc.addTrack(track, state.localScreenStream);
@@ -1463,7 +1637,11 @@
           if (!params.encodings || !params.encodings.length) params.encodings = [{}];
           params.encodings[0].maxBitrate = state.streamSettings.bitrateKbps * 1000;
           params.encodings[0].maxFramerate = state.streamSettings.fps;
-          params.degradationPreference = 'maintain-framerate';
+          params.encodings[0].scaleResolutionDownBy = 1.0;
+          params.encodings[0].priority = 'high';
+          params.encodings[0].networkPriority = 'high';
+          // TRAVA A RESOLUÇÃO: Proíbe o WebRTC de alterar a resolução sozinho (ex: cair de 1080p/1440p para 720p)
+          params.degradationPreference = 'maintain-resolution';
           await sender.setParameters(params);
         } catch (e) {}
       }
@@ -1487,7 +1665,7 @@
 
     try {
       const offer = await pc.createOffer();
-      offer.sdp = boostOpusStereoAudio(offer.sdp);
+      offer.sdp = boostSdpForUltraStream(offer.sdp, state.streamSettings.bitrateKbps);
       await pc.setLocalDescription(offer);
 
       outEntry.offerSent = true;
@@ -1509,42 +1687,93 @@
     } catch (e) {}
   }
 
-  function watchFriendStream(streamerId) {
+  function watchFriendStream(streamerId, force = false) {
+    if (
+      !force &&
+      state.spotlightPeerId === streamerId &&
+      state.screenInEntry &&
+      state.screenInEntry.streamerId === streamerId
+    ) {
+      const st = state.screenInEntry.pc.connectionState || state.screenInEntry.pc.iceConnectionState;
+      const ageMs = Date.now() - (state.screenInEntry.createdAt || 0);
+      if (
+        state.webrtcVideoActive ||
+        st === 'connected' ||
+        st === 'completed' ||
+        ((st === 'new' || st === 'connecting' || st === 'checking') && ageMs < 8500)
+      ) {
+        openSpotlight(streamerId);
+        return;
+      }
+    }
+
     openSpotlight(streamerId);
     setMobileTab('stage');
     state.webrtcVideoActive = false;
-    state.earlyIceByPeer.delete(streamerId);
 
-    publishDirect(streamerId, { type: 'watch-request' });
+    publishDirect(streamerId, { type: 'watch-request', force });
 
     if (state.watchRetryTimer) clearInterval(state.watchRetryTimer);
-    let attempts = 0;
     state.watchRetryTimer = setInterval(() => {
       if (state.spotlightPeerId !== streamerId || state.webrtcVideoActive) {
         clearInterval(state.watchRetryTimer);
         return;
       }
-      attempts++;
-      if (attempts >= 1) {
-        publishDirect(streamerId, { type: 'request-relay-fallback' });
+      const inPc = state.screenInEntry && state.screenInEntry.streamerId === streamerId ? state.screenInEntry.pc : null;
+      const iceSt = inPc ? inPc.iceConnectionState : 'none';
+      // Só pede reconexão se o ICE realmente falhou ou se após 6.5s ainda não recebeu vídeo
+      if (!inPc || iceSt === 'failed' || iceSt === 'disconnected' || iceSt === 'closed') {
+        publishDirect(streamerId, { type: 'watch-request', force: true });
+      } else {
+        publishDirect(streamerId, { type: 'watch-request', force: true });
       }
-      publishDirect(streamerId, { type: 'watch-request' });
-    }, 3000);
+    }, 6500);
+  }
+
+  function tryPlaySpotlightVideo() {
+    els.spotlightCanvas.classList.add('hidden');
+    const desiredVol = Number(els.spotlightVolume.value) / 100;
+    els.spotlightVideo.volume = desiredVol;
+    els.spotlightVideo.muted = desiredVol === 0;
+
+    const playPromise = els.spotlightVideo.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
+        })
+        .catch(() => {
+          // Caso o navegador bloqueie autoplay com som (quando abre a live automático sem clique prévio),
+          // inicia o vídeo mutado imediatamente para NUNCA ficar com tela preta pausada!
+          els.spotlightVideo.muted = true;
+          els.spotlightVideo.play().catch(() => {});
+          if (els.btnMobileUnmute) els.btnMobileUnmute.classList.remove('hidden');
+        });
+    }
   }
 
   async function handleIncomingScreenOffer(streamerId, sdp, sessionId) {
+    if (
+      state.screenInEntry &&
+      state.screenInEntry.streamerId === streamerId &&
+      state.screenInEntry.sessionId === sessionId
+    ) {
+      return;
+    }
+
     if (state.screenInEntry && state.screenInEntry.pc) {
       try { state.screenInEntry.pc.close(); } catch (e) {}
     }
 
     const pc = new RTCPeerConnection(RTC_CONFIG);
-    const earlyCandidates = state.earlyIceByPeer.get(streamerId) || [];
-    state.earlyIceByPeer.delete(streamerId);
+    const earlyCandidates = (sessionId && state.earlyIceBySession.get(sessionId)) || [];
+    if (sessionId) state.earlyIceBySession.delete(sessionId);
 
     const inEntry = {
       pc,
       streamerId,
       sessionId,
+      createdAt: Date.now(),
       remoteStream: new MediaStream(),
       answerSent: false,
       localIceBuffer: [],
@@ -1568,32 +1797,37 @@
     };
 
     pc.ontrack = (ev) => {
-      inEntry.remoteStream.addTrack(ev.track);
-      els.spotlightVideo.srcObject = inEntry.remoteStream;
-      els.spotlightVideo.muted = false;
-      els.spotlightVideo.volume = Number(els.spotlightVolume.value) / 100;
-      els.spotlightVideo.play().then(() => {
-        if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
-      }).catch(() => {
-        // Navegadores mobile às vezes exigem 1 toque do usuário para liberar áudio
-        els.spotlightVideo.muted = true;
-        els.spotlightVideo.play().catch(() => {});
-        if (els.btnMobileUnmute) els.btnMobileUnmute.classList.remove('hidden');
-      });
+      if (!inEntry.remoteStream.getTracks().some((t) => t.id === ev.track.id)) {
+        inEntry.remoteStream.addTrack(ev.track);
+      }
+
+      // Só atribui srcObject 1 única vez por sessão para que o 2º ontrack (áudio) não dê AbortError no vídeo!
+      if (els.spotlightVideo.srcObject !== inEntry.remoteStream) {
+        els.spotlightVideo.srcObject = inEntry.remoteStream;
+        els.spotlightVideo.onloadedmetadata = () => {
+          tryPlaySpotlightVideo();
+        };
+      }
+      tryPlaySpotlightVideo();
 
       if (ev.track.kind === 'video') {
+        ev.track.onunmute = () => {
+          tryPlaySpotlightVideo();
+        };
         const checkDecoded = setInterval(() => {
-          if (state.spotlightPeerId !== streamerId) {
+          if (state.spotlightPeerId !== streamerId || state.screenInEntry !== inEntry) {
             clearInterval(checkDecoded);
             return;
+          }
+          if (els.spotlightVideo.paused && els.spotlightVideo.readyState >= 2) {
+            tryPlaySpotlightVideo();
           }
           if (els.spotlightVideo.videoWidth > 0 && els.spotlightVideo.readyState >= 2) {
             state.webrtcVideoActive = true;
             els.spotlightCanvas.classList.add('hidden');
-            publishDirect(streamerId, { type: 'stop-relay-fallback' });
             clearInterval(checkDecoded);
           }
-        }, 100);
+        }, 120);
       }
     };
 
@@ -1609,7 +1843,7 @@
       inEntry.pendingCandidates = [];
 
       const answer = await pc.createAnswer();
-      answer.sdp = boostOpusStereoAudio(answer.sdp);
+      answer.sdp = boostSdpForUltraStream(answer.sdp, state.streamSettings.bitrateKbps);
       await pc.setLocalDescription(answer);
 
       inEntry.answerSent = true;
@@ -1627,8 +1861,15 @@
           candidate: c,
         });
       }
+      outEntryCleanupOldSessions();
       inEntry.localIceBuffer = [];
     } catch (e) {}
+  }
+
+  function outEntryCleanupOldSessions() {
+    if (state.earlyIceBySession.size > 20) {
+      state.earlyIceBySession.clear();
+    }
   }
 
   if (els.btnMobileUnmute) {
@@ -1640,55 +1881,6 @@
       els.spotlightVideo.play().catch(() => {});
       els.btnMobileUnmute.classList.add('hidden');
     };
-  }
-
-  function ensureFallbackRelayLoop() {
-    if (state.fallbackSenderTimer) return;
-    const previewCanvas = document.createElement('canvas');
-    const previewCtx = previewCanvas.getContext('2d', { alpha: false });
-    let encodingFallback = false;
-
-    state.fallbackSenderTimer = setInterval(() => {
-      if (!state.isStreaming || state.activeFallbackViewers.size === 0) {
-        clearInterval(state.fallbackSenderTimer);
-        state.fallbackSenderTimer = null;
-        return;
-      }
-      if (encodingFallback) return;
-      encodingFallback = true;
-
-      const srcW = state.captureCanvas.width || 1920;
-      const srcH = state.captureCanvas.height || 1080;
-      const scale = Math.min(1, 1152 / srcW);
-      previewCanvas.width = Math.round(srcW * scale);
-      previewCanvas.height = Math.round(srcH * scale);
-      previewCtx.drawImage(state.captureCanvas, 0, 0, previewCanvas.width, previewCanvas.height);
-
-      previewCanvas.toBlob(
-        (blob) => {
-          if (!blob) {
-            encodingFallback = false;
-            return;
-          }
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const dataUrl = reader.result;
-            for (const viewerId of state.activeFallbackViewers) {
-              publishDirect(viewerId, {
-                type: 'relay-frame',
-                w: srcW,
-                h: srcH,
-                d: dataUrl,
-              });
-            }
-            encodingFallback = false;
-          };
-          reader.readAsDataURL(blob);
-        },
-        'image/jpeg',
-        0.6
-      );
-    }, 90);
   }
 
   // =========================================================================
@@ -1743,7 +1935,7 @@
 
   function closeSpotlight() {
     if (state.spotlightPeerId && state.spotlightPeerId !== state.clientId) {
-      publishDirect(state.spotlightPeerId, { type: 'stop-relay-fallback' });
+      publishDirect(state.spotlightPeerId, { type: 'stop-watching' });
     }
     state.spotlightPeerId = null;
     state.webrtcVideoActive = false;
@@ -1851,9 +2043,10 @@
     state.framesCapturedCount = 0;
     state.bytesTransferredThisSec = 0;
 
-    let resText = `${state.captureCanvas.width}×${state.captureCanvas.height}`;
+    const targetResSpec = RESOLUTION_MAP[state.streamSettings.resolution] || RESOLUTION_MAP['1080'];
+    let resText = `${targetResSpec.width}×${targetResSpec.height}`;
 
-    // Se estamos transmitindo via Zero-Copy GPU, lê direto da Track ou do RTCPeerConnection Outbound
+    // Se estamos transmitindo via Zero-Copy GPU, lê direto da Track ou do RTCPeerConnection Conectado
     if (state.isStreaming && state.localScreenStream) {
       const vt = state.localScreenStream.getVideoTracks()[0];
       if (vt && vt.getSettings) {
@@ -1861,23 +2054,43 @@
         if (s.width && s.height) resText = `${s.width}×${s.height}`;
         if (s.frameRate && fps === 0) fps = Math.round(s.frameRate);
       }
-      const firstOut = state.screenOutPcs.values().next().value;
-      if (firstOut && firstOut.pc) {
+
+      let activeOut = null;
+      for (const entry of state.screenOutPcs.values()) {
+        if (
+          entry.pc &&
+          (entry.pc.connectionState === 'connected' ||
+            entry.pc.iceConnectionState === 'connected' ||
+            entry.pc.iceConnectionState === 'completed')
+        ) {
+          activeOut = entry;
+          break;
+        }
+      }
+      if (!activeOut) activeOut = state.screenOutPcs.values().next().value;
+
+      if (activeOut && activeOut.pc) {
         try {
-          const stats = await firstOut.pc.getStats();
+          const stats = await activeOut.pc.getStats();
           stats.forEach((r) => {
             if (r.type === 'outbound-rtp' && r.kind === 'video') {
-              if (r.framesPerSecond !== undefined) {
+              if (r.framesPerSecond !== undefined && r.framesPerSecond > 0) {
                 fps = Math.round(r.framesPerSecond);
               } else if (r.framesSent !== undefined) {
                 const df = r.framesSent - prevOutboundFrames;
-                if (df >= 0) fps = Math.round(df / dt);
+                if (df > 0) fps = Math.round(df / dt);
                 prevOutboundFrames = r.framesSent;
               }
               if (r.frameWidth && r.frameHeight) resText = `${r.frameWidth}×${r.frameHeight}`;
               const deltaB = r.bytesSent - prevOutboundBytes;
               if (deltaB >= 0) mbps = ((deltaB * 8) / dt / 1_000_000).toFixed(1);
               prevOutboundBytes = r.bytesSent;
+
+              if (r.encoderImplementation && els.statCodec) {
+                els.statCodec.textContent = r.powerEfficientEncoder
+                  ? `GPU (${r.encoderImplementation})`
+                  : `H.264 (${r.encoderImplementation})`;
+              }
             }
           });
         } catch (e) {}
@@ -2293,7 +2506,26 @@
   // =========================================================================
   // 11. EVENTOS GERAIS
   // =========================================================================
+  function syncStreamModalControls() {
+    document.querySelectorAll('#resolution-group .seg-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.res === state.streamSettings.resolution);
+    });
+    document.querySelectorAll('#fps-group .seg-btn').forEach((b) => {
+      b.classList.toggle('active', Number(b.dataset.fps) === state.streamSettings.fps);
+    });
+    document.querySelectorAll('.preset-card').forEach((c) => {
+      c.classList.toggle('active', c.dataset.preset === state.streamSettings.preset);
+    });
+    if (els.bitrateSlider) {
+      els.bitrateSlider.value = String(state.streamSettings.bitrateKbps);
+    }
+    if (els.bitrateValueLabel) {
+      els.bitrateValueLabel.textContent = `${(state.streamSettings.bitrateKbps / 1000).toFixed(1)} Mbps`;
+    }
+  }
+
   function openStreamPickerModal() {
+    syncStreamModalControls();
     els.streamModal.classList.remove('hidden');
     loadNativeSources();
   }
@@ -2348,7 +2580,7 @@
 
   els.btnReconnectStream.onclick = () => {
     if (state.spotlightPeerId && state.spotlightPeerId !== state.clientId) {
-      watchFriendStream(state.spotlightPeerId);
+      watchFriendStream(state.spotlightPeerId, true);
       showToast('Reconectando à transmissão...', '🔄');
     }
   };
@@ -2382,6 +2614,8 @@
       document.querySelectorAll('.preset-card').forEach((c) => c.classList.remove('active'));
       card.classList.add('active');
       state.streamSettings.preset = card.dataset.preset;
+      localStorage.setItem('streamcord_preset', state.streamSettings.preset);
+      updateLocalProfileUI();
     };
   });
 
@@ -2390,6 +2624,8 @@
       document.querySelectorAll('#resolution-group .seg-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       state.streamSettings.resolution = btn.dataset.res;
+      localStorage.setItem('streamcord_res', state.streamSettings.resolution);
+      updateLocalProfileUI();
     };
   });
 
@@ -2398,12 +2634,15 @@
       document.querySelectorAll('#fps-group .seg-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       state.streamSettings.fps = Number(btn.dataset.fps);
+      localStorage.setItem('streamcord_fps', String(state.streamSettings.fps));
+      updateLocalProfileUI();
     };
   });
 
   els.bitrateSlider.oninput = () => {
     const kbps = Number(els.bitrateSlider.value);
     state.streamSettings.bitrateKbps = kbps;
+    localStorage.setItem('streamcord_bitrate', String(kbps));
     els.bitrateValueLabel.textContent = `${(kbps / 1000).toFixed(1)} Mbps`;
   };
 
@@ -2536,6 +2775,7 @@
       .replace(/"/g, '&quot;');
   }
 
+  syncStreamModalControls();
   applyThemeModel(state.activeTheme, false);
   updateLocalProfileUI();
   renderChannelsSidebar();
