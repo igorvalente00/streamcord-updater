@@ -1,19 +1,56 @@
-// StreamCord v9.7.0 — Multi-Stream Simultânea + P2P Bidirecional Blindado + GPU Zero-Copy
+// StreamCord v9.8.0 — Cloudflare Realtime TURN + Multi-Stream Simultânea + GPU Zero-Copy
 (() => {
-  const APP_VERSION = '9.7.0';
+  const APP_VERSION = '9.8.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
+  const FALLBACK_STUN_SERVERS = [
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ];
+
   const RTC_CONFIG = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun.cloudflare.com:3478' },
-    ],
+    iceServers: [...FALLBACK_STUN_SERVERS],
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require',
     iceCandidatePoolSize: 6,
   };
+
+  let iceServersFetchedAt = 0;
+  let iceServersPromise = null;
+
+  async function ensureIceServersReady() {
+    if (iceServersFetchedAt > 0 && Date.now() - iceServersFetchedAt < 12 * 60 * 60 * 1000) {
+      return;
+    }
+    if (iceServersPromise) return iceServersPromise;
+
+    iceServersPromise = (async () => {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), 2500) : null;
+      try {
+        const res = await fetch('/api/ice-servers', {
+          cache: 'no-store',
+          signal: controller ? controller.signal : undefined,
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+          RTC_CONFIG.iceServers = [...data.iceServers, { urls: 'stun:stun.l.google.com:19302' }];
+          if (!data.fallback) {
+            iceServersFetchedAt = Date.now();
+          }
+        }
+      } catch (_) {
+        // Fallback silencioso para STUN padrão caso o endpoint local não esteja disponível
+      } finally {
+        if (timer) clearTimeout(timer);
+        iceServersPromise = null;
+      }
+    })();
+
+    return iceServersPromise;
+  }
 
   const DEFAULT_CHANNELS = [
     { id: 'gameplay-2k', name: '🎮 Gameplay 2K 60FPS', bitrate: '25 Mbps', defaultRes: '1440', defaultFps: 60, defaultKbps: 20000 },
@@ -1901,6 +1938,7 @@
     }
 
     if (existing) closeScreenOutPc(viewerId);
+    await ensureIceServersReady();
 
     const sessionId = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     const pc = new RTCPeerConnection(RTC_CONFIG);
@@ -2432,6 +2470,7 @@
 
     ws.offerReceived = true;
     setStreamCardStatus(ws, '🔗 Oferta P2P recebida, conectando...');
+    await ensureIceServersReady();
     const pc = new RTCPeerConnection(RTC_CONFIG);
     const earlyCandidates = (sessionId && state.earlyIceBySession.get(sessionId)) || [];
     if (sessionId) state.earlyIceBySession.delete(sessionId);
@@ -3954,6 +3993,7 @@
   updateLocalProfileUI();
   renderChannelsSidebar();
   loadProfileFromServer().finally(() => {
+    void ensureIceServersReady();
     connectCloudSignaling();
   });
 })();
