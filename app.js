@@ -1,6 +1,6 @@
-// StreamCord v9.8.1 — Cloudflare Realtime TURN + Trava de Cota 1000GB + Multi-Stream
+// StreamCord v9.9.0 — Áudio Discord Isolado via WASAPI Mixer + SDP Anti-Queda + TURN UDP Prioritário
 (() => {
-  const APP_VERSION = '9.8.1';
+  const APP_VERSION = '9.9.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -176,7 +176,15 @@
           return;
         }
         if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
-          RTC_CONFIG.iceServers = [...data.iceServers, { urls: 'stun:stun.l.google.com:19302' }];
+          // Prioriza SEMPRE TURN sobre UDP (portas 3478 e 443) antes de qualquer TCP/TLS
+          // para evitar TCP Head-of-Line Blocking que derruba FPS e quadricula vídeo 60FPS!
+          const prioritized = data.iceServers.map((srv) => {
+            if (!srv || !Array.isArray(srv.urls)) return srv;
+            const udpUrls = srv.urls.filter((u) => /^stun:/i.test(u) || /transport=udp/i.test(u));
+            const otherUrls = srv.urls.filter((u) => !udpUrls.includes(u));
+            return { ...srv, urls: [...udpUrls, ...otherUrls] };
+          });
+          RTC_CONFIG.iceServers = [...prioritized, { urls: 'stun:stun.l.google.com:19302' }];
           if (!data.fallback) {
             iceServersFetchedAt = Date.now();
           }
@@ -1858,6 +1866,22 @@
       `Transmissão Turbo ${resSpec.label} @ ${cfg.fps}FPS ${hasAudioTrack ? '+ Áudio Ativo' : '(Sem Áudio)'}!`,
       '🔴'
     );
+    if (hasAudioTrack && state.hasNativeBackend && cfg.audioMode !== 'none') {
+      setTimeout(async () => {
+        if (!state.isStreaming) return;
+        try {
+          const hRes = await fetch('/api/health', { cache: 'no-store' });
+          if (!hRes.ok) return;
+          const h = await hRes.json();
+          if (h.audioLoopbackStatus === 'standard_fallback_with_discord') {
+            showToast(
+              '⚠️ Seu Windows não suporta isolamento WASAPI por app (Win 10 antigo): o som do Discord pode vazar. Atualize p/ Win 11 ou use modo Sem Áudio.',
+              '⚠️'
+            );
+          }
+        } catch (_) {}
+      }, 900);
+    }
     setMobileTab('stage');
 
     announcePresence(false);
@@ -1992,6 +2016,63 @@
     );
   }
 
+  // Injeta piso (x-google-min-bitrate), partida rápida (x-google-start-bitrate) e teto (b=AS) no SDP de vídeo
+  // para impedir que o GCC do WebRTC derrube a imagem para 300-500kbps borrados ao passar pelo TURN/P2P!
+  function tuneVideoBitrateSdp(sdp, maxKbps) {
+    if (!sdp || !Number.isFinite(maxKbps)) return sdp;
+    const clampedMax = Math.max(2500, Math.min(25000, Math.round(maxKbps)));
+    const startKbps = Math.min(clampedMax, 5000);
+    const minKbps = Math.min(clampedMax, 2500);
+    const lines = sdp.split(/\r?\n/);
+    const out = [];
+    let inVideo = false;
+    let videoPayloads = new Set();
+    let insertedBandwidth = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.startsWith('m=')) {
+        inVideo = line.startsWith('m=video ');
+        insertedBandwidth = false;
+        videoPayloads = new Set();
+        if (inVideo) {
+          const parts = line.trim().split(/\s+/);
+          for (let p = 3; p < parts.length; p++) videoPayloads.add(parts[p]);
+        }
+        out.push(line);
+        continue;
+      }
+
+      if (inVideo && line.startsWith('b=AS:')) {
+        out.push(`b=AS:${clampedMax}`);
+        insertedBandwidth = true;
+        continue;
+      }
+
+      if (inVideo && line.startsWith('c=IN ') && !insertedBandwidth) {
+        out.push(line);
+        out.push(`b=AS:${clampedMax}`);
+        insertedBandwidth = true;
+        continue;
+      }
+
+      if (inVideo && line.startsWith('a=fmtp:')) {
+        const m = line.match(/^a=fmtp:(\d+)\s+(.+)$/);
+        if (m && videoPayloads.has(m[1]) && !/apt=/i.test(m[2])) {
+          let fmtp = m[2].trim();
+          if (!/x-google-start-bitrate=/i.test(fmtp)) fmtp += `;x-google-start-bitrate=${startKbps}`;
+          if (!/x-google-min-bitrate=/i.test(fmtp)) fmtp += `;x-google-min-bitrate=${minKbps}`;
+          if (!/x-google-max-bitrate=/i.test(fmtp)) fmtp += `;x-google-max-bitrate=${clampedMax}`;
+          out.push(`a=fmtp:${m[1]} ${fmtp}`);
+          continue;
+        }
+      }
+
+      out.push(line);
+    }
+    return out.join('\r\n');
+  }
+
   function getViewerEncoding() {
     const count = Math.max(1, state.screenOutPcs.size);
     const { bitrateKbps, fps, resolution } = state.streamSettings;
@@ -2002,8 +2083,8 @@
       ? Math.min(selectedHeight, sourceHeight >= 360 ? sourceHeight : selectedHeight)
       : (sourceHeight >= 360 ? sourceHeight : 1080);
 
-    const totalBps = Math.min(25000, Math.max(2500, Number(bitrateKbps) || 8000)) * 1000;
-    const perViewerBps = Math.max(1500000, Math.floor(totalBps / count));
+    const totalBps = Math.min(25000, Math.max(3000, Number(bitrateKbps) || 10000)) * 1000;
+    const perViewerBps = Math.max(2500000, Math.floor(totalBps / count));
 
     // Mantém resolução nativa (scale = 1.0) enquanto houver >= 2.5 Mbps por espectador,
     // evitando reconfigurações bruscas do encoder ao entrar um 2º amigo na call!
@@ -2016,6 +2097,8 @@
       maxBitrate: perViewerBps,
       maxFramerate: fps,
       scaleResolutionDownBy: Math.round(scale * 100) / 100,
+      priority: 'high',
+      networkPriority: 'high',
     };
   }
 
@@ -2028,8 +2111,15 @@
         const params = entry.videoSender.getParameters();
         if (!params.encodings?.length) return;
         Object.assign(params.encodings[0], encoding);
-        params.degradationPreference = 'maintain-framerate';
-        await entry.videoSender.setParameters(params);
+        // 'disabled' trava resolução nativa E 60 FPS no Chromium (evita downscale p/ 360p ou queda p/ 20fps!).
+        const preferredDeg = state.streamSettings.preset === 'detail' ? 'maintain-resolution' : 'disabled';
+        params.degradationPreference = preferredDeg;
+        try {
+          await entry.videoSender.setParameters(params);
+        } catch (degErr) {
+          params.degradationPreference = 'balanced';
+          await entry.videoSender.setParameters(params);
+        }
         entry.appliedEncoding = encoding;
       }
     } catch (error) {
@@ -2160,7 +2250,8 @@
       preferOptimalGameCodec(pc, forceAlt);
       const offer = await pc.createOffer();
       if (!isCurrent()) return;
-      offer.sdp = preferStereoOpus(offer.sdp);
+      const targetKbps = Math.round(((outEntry.desiredEncoding && outEntry.desiredEncoding.maxBitrate) || 10000000) / 1000);
+      offer.sdp = tuneVideoBitrateSdp(preferStereoOpus(offer.sdp), targetKbps);
       await pc.setLocalDescription(offer);
       if (!isCurrent()) return;
 
@@ -2679,6 +2770,13 @@
 
     pc.ontrack = (ev) => {
       if (ws.inEntry !== inEntry || !state.watchedStreams.has(streamerId)) return;
+      if (ev.receiver) {
+        try {
+          // 25ms de buffer leve no receptor absorve micro-jitter do TURN sem travar quadros (60FPS contínuos)
+          if ('playoutDelayHint' in ev.receiver) ev.receiver.playoutDelayHint = 0.025;
+          if ('jitterBufferTarget' in ev.receiver) ev.receiver.jitterBufferTarget = 25;
+        } catch (_) {}
+      }
       if (ev.track.kind === 'video') {
         if (!inEntry.remoteVideoStream.getTracks().some((t) => t.id === ev.track.id)) {
           inEntry.remoteVideoStream.addTrack(ev.track);
@@ -2741,7 +2839,7 @@
       inEntry.pendingCandidates = [];
 
       const answer = await pc.createAnswer();
-      answer.sdp = preferStereoOpus(answer.sdp);
+      answer.sdp = tuneVideoBitrateSdp(preferStereoOpus(answer.sdp), 15000);
       await pc.setLocalDescription(answer);
       if (ws.inEntry !== inEntry) return;
 
@@ -2895,7 +2993,20 @@
             if (r.frameWidth && r.frameHeight) outRes = `${r.frameWidth}×${r.frameHeight}`;
             if (els.statCodec) {
               const codec = stats.get(r.codecId)?.mimeType?.split('/')[1] || 'WebRTC';
-              els.statCodec.textContent = r.powerEfficientEncoder ? `${codec} (GPU)` : codec;
+              let routeTag = '';
+              stats.forEach((p) => {
+                if (p.type === 'candidate-pair' && (p.selected || (p.nominated && p.state === 'succeeded'))) {
+                  const lc = p.localCandidateId ? stats.get(p.localCandidateId) : null;
+                  const rc = p.remoteCandidateId ? stats.get(p.remoteCandidateId) : null;
+                  const isRelay = (lc && lc.candidateType === 'relay') || (rc && rc.candidateType === 'relay');
+                  const proto = (lc && lc.protocol) || (rc && rc.protocol) || 'udp';
+                  routeTag = isRelay ? ` • TURN ${proto.toUpperCase()}` : ` • P2P`;
+                }
+              });
+              const qlr = r.qualityLimitationReason && r.qualityLimitationReason !== 'none'
+                ? ` ⚠️${r.qualityLimitationReason === 'bandwidth' ? 'Rede' : r.qualityLimitationReason.toUpperCase()}`
+                : '';
+              els.statCodec.textContent = `${codec}${r.powerEfficientEncoder ? ' (GPU)' : ''}${routeTag}${qlr}`;
             }
           });
         } catch (e) {}
@@ -2926,7 +3037,23 @@
           ws.fpsBadgeEl.textContent = rFps;
           ws.mbpsBadgeEl.textContent = rMbps;
           if (!firstRemoteStats || state.focusedStreamerId === ws.streamerId) {
-            firstRemoteStats = { res: rRes, fps: rFps, mbps: rMbps };
+            const rCodec = stats.get(r.codecId)?.mimeType?.split('/')[1] || 'WebRTC';
+            let rRoute = '';
+            stats.forEach((p) => {
+              if (p.type === 'candidate-pair' && (p.selected || (p.nominated && p.state === 'succeeded'))) {
+                const lc = p.localCandidateId ? stats.get(p.localCandidateId) : null;
+                const rc = p.remoteCandidateId ? stats.get(p.remoteCandidateId) : null;
+                const isRelay = (lc && lc.candidateType === 'relay') || (rc && rc.candidateType === 'relay');
+                const proto = (lc && lc.protocol) || (rc && rc.protocol) || 'udp';
+                rRoute = isRelay ? ` • TURN ${proto.toUpperCase()}` : ` • P2P`;
+              }
+            });
+            firstRemoteStats = {
+              res: rRes,
+              fps: rFps,
+              mbps: rMbps,
+              codec: `${rCodec}${r.powerEfficientDecoder ? ' (GPU)' : ''}${rRoute}`,
+            };
           }
         });
       } catch (e) {}
@@ -2941,6 +3068,9 @@
         els.statResolution.textContent = firstRemoteStats.res;
         els.statFps.textContent = firstRemoteStats.fps;
         els.statBitrate.textContent = firstRemoteStats.mbps;
+        if (els.statCodec && firstRemoteStats.codec) {
+          els.statCodec.textContent = firstRemoteStats.codec;
+        }
       } else {
         els.statResolution.textContent = outRes;
         els.statFps.textContent = '— FPS';
