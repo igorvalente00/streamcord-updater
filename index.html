@@ -166,7 +166,7 @@
             <div class="user-sub-status" id="local-quality-tag">Somente Tela + Áudio PC</div>
           </div>
         </div>
-        <span class="version-tag" id="sidebar-version-tag">v8.2.0</span>
+        <span class="version-tag" id="sidebar-version-tag">v9.0.0</span>
       </div>
     </aside>
 
@@ -253,16 +253,17 @@
           <div class="spotlight-wrapper hidden" id="spotlight-wrapper">
             <div class="video-viewport" id="spotlight-viewport">
               <div class="video-zoom-container" id="video-zoom-container">
-                <video id="spotlight-video" autoplay playsinline></video>
+                <video id="spotlight-video" autoplay muted playsinline></video>
+                <audio id="remote-stream-audio" autoplay></audio>
                 <canvas id="spotlight-canvas" class="backup-canvas hidden"></canvas>
               </div>
 
               <!-- Camada de Emojis / Reações Flutuantes Ao Vivo -->
               <div class="floating-reactions-layer" id="floating-reactions-layer"></div>
 
-              <!-- Banner de Desbloqueio de Áudio Mobile (Quando o navegador do celular bloqueia autoplay com som) -->
+              <!-- Banner de Desbloqueio de Áudio (Caso o navegador bloqueie autoplay com som antes do 1º clique) -->
               <button type="button" class="mobile-unmute-banner hidden" id="btn-mobile-unmute">
-                🔊 Toque aqui para ativar o Áudio Estéreo da Transmissão
+                🔊 Clique aqui (ou em qualquer lugar) para ativar o Som da Transmissão
               </button>
 
               <!-- Banner de Economia de GPU quando VOCÊ está transmitindo (Igual ao Discord!) -->
@@ -336,7 +337,7 @@
               </div>
               <div class="hud-item">
                 <span class="hud-label">Versão do App</span>
-                <span class="hud-val" id="stat-loss">v8.2.0</span>
+                <span class="hud-val" id="stat-loss">v9.0.0</span>
               </div>
             </div>
           </div>
@@ -491,6 +492,7 @@
             </div>
             <div class="segmented-group" id="resolution-group">
               <button type="button" class="seg-btn" data-res="720">720p</button>
+              <button type="button" class="seg-btn" data-res="900" title="Ideal para Deadlock, CS2 e jogos de ação rápida: nitidez quase 1080p com 31% menos peso!">900p FPS</button>
               <button type="button" class="seg-btn active" data-res="1080">1080p</button>
               <button type="button" class="seg-btn" data-res="1440">1440p (2K)</button>
               <button type="button" class="seg-btn" data-res="source">Nativa</button>
@@ -509,10 +511,10 @@
         <!-- Modo de Otimização e Bitrate -->
         <div class="form-section two-cols">
           <div>
-            <label class="section-label">MODO DO ENCODER GPU (H.264)</label>
+            <label class="section-label">MOTOR DE CODIFICAÇÃO EM JOGOS</label>
             <div class="segmented-group">
-              <button type="button" class="seg-btn preset-card active" data-preset="motion">⚡ Fluidez Máxima (60 FPS)</button>
-              <button type="button" class="seg-btn preset-card" data-preset="detail">💎 Nitidez Texto (2K)</button>
+              <button type="button" class="seg-btn preset-card active" data-preset="motion" title="Detecta NVENC/AMF Hardware ou VP8 Multi-Thread para não travar em teamfights!">🚀 GPU Turbo (Deadlock/FPS)</button>
+              <button type="button" class="seg-btn preset-card" data-preset="vp8" title="Força VP8 Multi-Core ultra compatível">⚡ VP8 Multi-Core</button>
             </div>
           </div>
 
@@ -624,6 +626,30 @@
           <div class="invite-row">
             <input type="text" id="input-room-code" class="discord-input" placeholder="Ex: IGOR-2K60" />
             <button type="button" class="btn-go-live" id="btn-save-name">Salvar e Conectar</button>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <div class="label-row">
+            <label class="section-label">ENVIAR PARA AMIGOS (SEM BLOQUEIO DO WINDOWS!)</label>
+            <span class="nitro-tag">ABRE DIRETO SEM AVISO AZUL</span>
+          </div>
+          <div class="quick-install-card">
+            <div style="font-size:12px;color:#dbdee1;line-height:1.4;">
+              <strong>Opção 1 (App Desktop 2K60 Sem Aviso do Windows):</strong> Seu amigo só aperta <code>Win + R</code> no teclado, cola com <code>Ctrl + V</code> e aperta <code>Enter</code> (cria atalho na Área de Trabalho e já abre!):
+            </div>
+            <div class="quick-install-cmd">
+              <span id="ps-install-cmd-text">powershell -NoProfile -c "irm https://igorvalente00.github.io/streamcord-updater/install.ps1 | iex"</span>
+              <button type="button" class="copy-room-mini" id="btn-copy-ps-install">Copiar</button>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+              <button type="button" class="btn-go-live" id="btn-copy-invite-page" style="flex:1;font-size:11.5px;padding:8px 10px;">
+                🔗 Copiar Página de Convite Completa
+              </button>
+              <button type="button" class="overlay-btn" id="btn-copy-web-direct" style="flex:1;font-size:11.5px;padding:8px 10px;">
+                🌐 Copiar Link Web (Sem Baixar Nada)
+              </button>
+            </div>
           </div>
         </div>
       </div>
