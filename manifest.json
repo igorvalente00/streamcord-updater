@@ -1,10 +1,17 @@
 {
   "name": "StreamCord 2K 60FPS",
   "short_name": "StreamCord",
-  "description": "Compartilhamento de Tela 2K 60FPS + Áudio PC (Discord Silenciado) — Desktop & Mobile",
-  "start_url": "./index.html",
+  "description": "Transmissão de Tela 2K 60FPS com Áudio do Jogo e Discord Silenciado",
+  "start_url": "./",
   "display": "standalone",
-  "orientation": "any",
   "background_color": "#111214",
-  "theme_color": "#5865f2"
+  "theme_color": "#5865F2",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }
