@@ -2246,3 +2246,45 @@ body {
     border-radius: 99px;
   }
 }
+
+/* ==========================================================================
+   7. MODO HIBERNAÇÃO DE GPU DA INTERFACE DURANTE JOGOS PESADOS (EX: DEADLOCK)
+   ========================================================================== */
+body.is-streaming-local *,
+body.is-streaming-local *::before,
+body.is-streaming-local *::after {
+  animation: none !important;
+  transition: none !important;
+  backdrop-filter: none !important;
+}
+
+body.is-streaming-local .stage-control-dock {
+  background-color: rgba(24, 25, 29, 0.98) !important;
+  box-shadow: none !important;
+}
+
+.quick-install-card {
+  background: rgba(35, 165, 90, 0.1);
+  border: 1px solid rgba(35, 165, 90, 0.45);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quick-install-cmd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: #0d0e11;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #57f287;
+  overflow-x: auto;
+}
+
