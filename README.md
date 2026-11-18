@@ -1,23 +1,14 @@
-# StreamCord 2K60 — compartilhamento de tela e áudio
+# 🎮 StreamCord 2K60 (v9.5.2) — Transmissão de Tela 2K 60FPS + Áudio (Discord Silenciado)
 
-Aplicativo para Windows e navegador com compartilhamento de tela via WebRTC, em até 2560×1440 e 60 FPS. A resolução e o FPS efetivos dependem da captura, do codificador, do upload e da conexão com cada espectador. No Windows, a captura de áudio do sistema usa WASAPI e permite excluir o Discord.
-
-## Transmitir para várias pessoas
-
-- Quem entra no canal vê o aviso da live. O vídeo é enviado quando a pessoa abre o player.
-- **Limite total de vídeo** controla o orçamento compartilhado pelos espectadores. Com 12 Mbps e quatro espectadores, o teto de vídeo é de 3 Mbps por conexão. Áudio e tráfego do protocolo usam banda adicional.
-- O app reduz a resolução de envio conforme a carga sobe e volta a aumentá-la quando há capacidade. O alvo de FPS definido no modal continua sendo o mesmo.
-- Cada espectador ainda recebe seu próprio envio WebRTC. Em jogos pesados, 900p ou 1080p reduzem também o custo da captura no transmissor.
-
+Aplicativo nativo independente para Windows (com WebView2 DirectX 11 embutido) e cliente Web/Mobile com compartilhamento de tela em até **2560×1440 @ 60 FPS** via WebRTC, áudio estéreo WASAPI (Discord 100% silenciado), cards 16:9 e gerenciador de canais — sem VPN e sem precisar abrir portas no roteador!
 
 ---
 
-## Novidades da versão 9.3.1 (histórico)
-- **Correção do Auto-Updater e Instalador (Sem Loop de Versão):** Sincronizada a versão interna do motor C# (`CURRENT_VERSION = 9.3.1`) e da interface para que o botão **"Atualizar App"** e o instalador reconheçam imediatamente a versão instalada sem repetir o aviso de atualização.
-- **App 100% Independente de Navegador (Engine Nativa Embutida):** O StreamCord agora roda em sua própria janela nativa com motor embutido de alta performance DirectX 11, sem abrir janelas externas de navegadores (Edge/Chrome) e sem a barra de URL ou erros como `ERR_CONNECTION_REFUSED`.
-- **Prioridade ao FPS em jogos pesados:** O pipeline WebRTC agora aplica explicitamente `degradationPreference: maintain-framerate`, pedindo ao WebRTC que preserve a taxa de quadros quando precisar reduzir a qualidade.
-- **Inicialização Instantânea:** O motor C# valida a prontidão do socket local antes de carregar o DOM, eliminando telas de espera no boot.
-- **Perfil e Dados 100% Persistentes:** Nome de usuário, avatar, tema, sala e configurações de stream salvos de forma permanente em `%APPDATA%\StreamCord\profile.json` e `%LOCALAPPDATA%\StreamCord\EngineProfile`.
+## ⚡ Novidades da Versão 9.5.2
+- **Zero Erros 404 na Versão Web (`github.io`):** Chamadas locais (`/api/profile`, `/api/update-status`, `/api/sources`, `/api/network-info`) agora rodam apenas no host desktop (`127.0.0.1`), eliminando o erro `Site not found · GitHub Pages` e todos os 404 no console dos amigos.
+- **Conexão WebRTC P2P Mais Rápida (Sem Bloqueio de IP Morto):** Removido o servidor `openrelay.metered.ca` (cujo DNS apontava para o IP inválido `192.0.2.1` e travava a negociação ICE).
+- **Indicador Visual de Conexão no Player:** O espectador vê em tempo real o andamento da conexão P2P e conta com botão imediato de **Tentar Reconectar**, evitando tela preta sem aviso.
+- **Deploy Atômico no GitHub Pages:** Publicação em commit único no `streamcord-updater` para evitar falhas temporárias de 404 durante atualizações.
 
 ---
 
@@ -44,7 +35,7 @@ Você e seus amigos **não precisam digitar nenhum comando** no terminal ou Powe
 Se algum amigo estiver no **celular (Android/iPhone)** ou em um notebook de fábrica/empresa com o *"Controle de Aplicativos Inteligentes"* bloqueando qualquer programa externo:
 1. Basta abrir este link direto no **Microsoft Edge**, **Google Chrome** ou **Safari**:
    👉 **[Abrir StreamCord Direto no Navegador (Sem Baixar Nada)](https://igorvalente00.github.io/streamcord-updater/?room=IGOR-2K60)**
-2. Ele entra na sala na mesma hora e pode abrir uma transmissão ativa no canal.
+2. Ele entra na sala na mesma hora com vídeo em até **2K 60FPS** e som estéreo!
    *(Caso queira liberar aplicativos independentes no Windows 11 com Controle de Aplicativos Inteligentes ativo: abra **Segurança do Windows** → **Controle de aplicativos e navegadores** → **Configurações do Controle de Aplicativos Inteligentes** → **Desativado**).*
 
 ---
@@ -59,10 +50,10 @@ Se algum amigo estiver no **celular (Android/iPhone)** ou em um notebook de fáb
    - Entre no canal desejado (ex: **`🎮 Gameplay 2K 60FPS`**) e clique em **Transmitir**.
    - Escolha a resolução ideal:
      - **`900p FPS` (1600×900 @ 60 FPS):** Recomendado para jogos competitivos intensos como **Deadlock**, **CS2** e **Valorant** em teamfights pesadas.
-     - **`1080p` (1920×1080 @ 60 FPS):** Opção Full HD para jogos e transmissões em grupo.
-     - **`1440p (2K)` (2560×1440 @ 60 FPS):** Maior resolução, com mais carga de captura e codificação.
+     - **`1080p` (1920×1080 @ 60 FPS):** Equilíbrio perfeito de nitidez Full HD e leveza na GPU (`~3.9 ms` por quadro).
+     - **`1440p (2K)` (2560×1440 @ 60 FPS):** Qualidade máxima Ultra Nitro (`20 Mbps`).
    - Mantenha o áudio em **`🔊 Transmitir Som do PC Inteiro (Com Discord Silenciado Automaticamente)`**.
-   - Clique em **🔴 Transmitir Ao Vivo (Go Live)** e selecione a tela ou a janela do jogo no seletor de captura.
+   - Clique em **🔴 Transmitir Ao Vivo (Go Live)** e selecione a **Tela** ou a **Janela do Jogo** na janela nativa DirectX do sistema!
 3. **Atualizações em 1 Clique (Estilo Discord):**
    - Quando sair uma versão nova, o botão no topo fica verde (**`⬇️ Atualizar vX.Y.Z`**). Basta clicar nele: o próprio programa baixa, substitui e reinicia sozinho na máquina sem precisar abrir o navegador!
 

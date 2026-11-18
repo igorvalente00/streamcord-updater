@@ -1,6 +1,7 @@
-// StreamCord — cliente web e interface Windows em WebView2.
+// StreamCord v9.5.2 — Cliente Web & Desktop Nativo WebView2 (Zero 404 na Web + Status P2P + ICE Rápido)
 (() => {
-  const APP_VERSION = '9.5.1';
+  const APP_VERSION = '9.5.2';
+  const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const RTC_CONFIG = {
     iceServers: [
@@ -8,15 +9,6 @@
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun.cloudflare.com:3478' },
-      {
-        urls: [
-          'turn:openrelay.metered.ca:80',
-          'turn:openrelay.metered.ca:443',
-          'turn:openrelay.metered.ca:443?transport=tcp',
-        ],
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
     ],
     bundlePolicy: 'max-bundle',
     iceCandidatePoolSize: 4,
@@ -158,7 +150,8 @@
     cloudConnected: false,
 
     // Captura Híbrida (C# Nativo Desktop + Web/Mobile)
-    hasNativeBackend: true,
+    hasNativeBackend: IS_LOCAL_HOST,
+    hasUserInteracted: false,
     nativeSources: [],
     selectedSourceId: 'monitor:0',
     sourceTab: 'monitor', // 'monitor' | 'window' | 'browser'
@@ -221,12 +214,12 @@
   // =========================================================================
   let sfxCtx = null;
   function playDiscordSound(type) {
-    if (!state.sfxEnabled) return;
+    if (!state.sfxEnabled || !state.hasUserInteracted) return;
     try {
       if (!sfxCtx) {
         sfxCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
-      if (sfxCtx.state === 'suspended') sfxCtx.resume();
+      if (sfxCtx.state === 'suspended') sfxCtx.resume().catch(() => {});
       const now = sfxCtx.currentTime;
 
       const playTone = (freq, start, dur, vol = 0.06, wave = 'sine') => {
@@ -472,6 +465,9 @@
     floatingReactionsLayer: document.getElementById('floating-reactions-layer'),
     btnMobileUnmute: document.getElementById('btn-mobile-unmute'),
     selfPreviewSaver: document.getElementById('self-preview-saver'),
+    viewerStatusOverlay: document.getElementById('viewer-status-overlay'),
+    viewerStatusText: document.getElementById('viewer-status-text'),
+    btnViewerRetry: document.getElementById('btn-viewer-retry'),
     btnToggleSelfPreview: document.getElementById('btn-toggle-self-preview'),
     btnHideSelfPreview: document.getElementById('btn-hide-self-preview'),
     spotlightStreamerName: document.getElementById('spotlight-streamer-name'),
@@ -705,6 +701,28 @@
       if (els.updateBtnLabel) els.updateBtnLabel.textContent = '🔍 Verificando...';
     }
     try {
+      if (!IS_LOCAL_HOST) {
+        const res = await fetch('./streamcord-update.json?t=' + Date.now(), { cache: 'no-store' });
+        if (res.ok) {
+          const manifest = await res.json();
+          const latest = manifest && manifest.version ? String(manifest.version).trim() : APP_VERSION;
+          if (latest !== APP_VERSION) {
+            state.updateAvailable = true;
+            state.latestVersion = latest;
+            els.btnHeaderUpdate.classList.add('update-ready');
+            els.updateBtnLabel.textContent = `⬇️ Recarregar v${latest}`;
+            if (manualClick) {
+              window.location.reload();
+              return;
+            }
+          } else if (manualClick) {
+            if (els.updateBtnLabel) els.updateBtnLabel.textContent = '🔄 Atualizar';
+            showToast(`Versão Web/Mobile já está atualizada (v${APP_VERSION})!`, '✅');
+          }
+        }
+        return;
+      }
+
       const res = await fetch('/api/update-status?t=' + Date.now(), { cache: 'no-store' });
       const data = await res.json();
       if (data && data.updateAvailable) {
@@ -733,6 +751,10 @@
   }
 
   async function triggerInPlaceUpdate() {
+    if (!IS_LOCAL_HOST) {
+      window.location.reload();
+      return;
+    }
     state.isApplyingUpdate = true;
     els.updateBtnLabel.textContent = '⏳ Baixando...';
     els.btnHeaderUpdate.disabled = true;
@@ -949,8 +971,9 @@
       case 'watch-request': {
         if (state.isStreaming && state.localScreenStream) {
           const entry = state.screenOutPcs.get(msg.senderId);
-          // Evita que a repetição automática derrube uma negociação ICE ainda em curso.
-          if (!msg.retry || !entry || Date.now() - entry.createdAt >= 15000) {
+          const connected = entry && (entry.pc.connectionState === 'connected' || entry.pc.iceConnectionState === 'connected' || entry.pc.iceConnectionState === 'completed');
+          // Evita derrubar negociação ativa já conectada ou recente (<6s).
+          if (!msg.retry || !entry || (!connected && Date.now() - entry.createdAt >= 6000)) {
             await startScreenOutPcForViewer(msg.senderId, Boolean(msg.force));
           }
         }
@@ -1089,6 +1112,16 @@
   // 6. SELETOR HÍBRIDO DE FONTES (C# DESKTOP NATIVO + MOBILE / NAVEGADOR WEB)
   // =========================================================================
   async function loadNativeSources() {
+    if (!IS_LOCAL_HOST) {
+      state.hasNativeBackend = false;
+      state.nativeSources = [];
+      state.sourceTab = 'browser';
+      els.tabMonitors.classList.remove('active');
+      els.tabWindows.classList.remove('active');
+      if (els.tabBrowserCam) els.tabBrowserCam.classList.add('active');
+      renderSourcesGrid();
+      return;
+    }
     els.sourcesGrid.innerHTML = `<div class="sources-loading">Carregando monitores, janelas e opções mobile...</div>`;
     try {
       const res = await fetch('/api/sources?t=' + Date.now());
@@ -1889,9 +1922,25 @@
     }
   }
 
+  function setViewerStatusOverlay(text, isError = false) {
+    if (!els.viewerStatusOverlay) return;
+    if (!text) {
+      els.viewerStatusOverlay.classList.add('hidden');
+      els.viewerStatusOverlay.classList.remove('is-error');
+      return;
+    }
+    if (els.viewerStatusText) els.viewerStatusText.textContent = text;
+    els.viewerStatusOverlay.classList.toggle('is-error', Boolean(isError));
+    els.viewerStatusOverlay.classList.remove('hidden');
+  }
+
   function watchFriendStream(streamerId, force = false) {
     if (state.isStreaming) return;
     if (state.spotlightPeerId && state.spotlightPeerId !== streamerId) closeSpotlight();
+    if (force && state.screenInEntry && state.screenInEntry.pc) {
+      try { state.screenInEntry.pc.close(); } catch (e) {}
+      state.screenInEntry = null;
+    }
     openSpotlight(streamerId);
     setMobileTab('stage');
 
@@ -1902,10 +1951,13 @@
       state.webrtcVideoActive &&
       els.spotlightVideo.videoWidth > 0
     ) {
+      setViewerStatusOverlay(null);
       return;
     }
 
     state.webrtcVideoActive = false;
+    const u = state.onlineUsers.get(streamerId);
+    setViewerStatusOverlay(`⏳ Solicitando transmissão de ${u ? u.username : 'Amigo'}...`);
     publishDirect(streamerId, { type: 'watch-request', force });
 
     if (state.watchRetryTimer) clearInterval(state.watchRetryTimer);
@@ -1915,8 +1967,17 @@
         state.watchRetryTimer = null;
         return;
       }
+      setViewerStatusOverlay('⏳ Aguardando resposta da transmissão P2P...');
       publishDirect(streamerId, { type: 'watch-request', force: true, retry: true });
-    }, 8000);
+    }, 5500);
+  }
+
+  if (els.btnViewerRetry) {
+    els.btnViewerRetry.onclick = () => {
+      if (state.spotlightPeerId && state.spotlightPeerId !== state.clientId) {
+        watchFriendStream(state.spotlightPeerId, true);
+      }
+    };
   }
 
   function unlockPendingRemoteAudio() {
@@ -1936,6 +1997,7 @@
   window.addEventListener(
     'pointerdown',
     () => {
+      state.hasUserInteracted = true;
       if (state.pendingAudioUnlock) unlockPendingRemoteAudio();
     },
     { passive: true }
@@ -1943,6 +2005,7 @@
   window.addEventListener(
     'keydown',
     () => {
+      state.hasUserInteracted = true;
       if (state.pendingAudioUnlock) unlockPendingRemoteAudio();
     },
     { passive: true }
@@ -1961,6 +2024,7 @@
       try { state.screenInEntry.pc.close(); } catch (e) {}
     }
 
+    setViewerStatusOverlay('🔗 Negociando conexão P2P...');
     const pc = new RTCPeerConnection(RTC_CONFIG);
     const earlyCandidates = (sessionId && state.earlyIceBySession.get(sessionId)) || [];
     if (sessionId) state.earlyIceBySession.delete(sessionId);
@@ -1977,6 +2041,22 @@
       pendingCandidates: [...earlyCandidates],
     };
     state.screenInEntry = inEntry;
+
+    const updateIceUi = () => {
+      if (state.screenInEntry !== inEntry || state.spotlightPeerId !== streamerId || state.webrtcVideoActive) return;
+      const st = pc.connectionState || pc.iceConnectionState;
+      if (st === 'checking' || st === 'connecting') {
+        setViewerStatusOverlay('🌐 Estabelecendo rota direta P2P (STUN)...');
+      } else if (st === 'connected' || st === 'completed') {
+        setViewerStatusOverlay('📡 P2P conectado, aguardando primeiro quadro...');
+      } else if (st === 'failed' || st === 'closed') {
+        setViewerStatusOverlay('⚠️ Conexão P2P bloqueada pelo NAT/Firewall. Clique em Reconectar.', true);
+      } else if (st === 'disconnected') {
+        setViewerStatusOverlay('⚠️ Conexão instável, tentando restabelecer...', true);
+      }
+    };
+    pc.oniceconnectionstatechange = updateIceUi;
+    pc.onconnectionstatechange = updateIceUi;
 
     pc.onicecandidate = ({ candidate }) => {
       if (!candidate) return;
@@ -1999,7 +2079,9 @@
         if (!inEntry.remoteVideoStream.getTracks().some((t) => t.id === ev.track.id)) {
           inEntry.remoteVideoStream.addTrack(ev.track);
         }
-        // O <video> fica SEMPRE muted=true (zero bloqueio de autoplay e zero tela preta!)
+        // O <video> fica SEMPRE muted=true e playsInline=true (zero bloqueio de autoplay no desktop e mobile!)
+        els.spotlightVideo.playsInline = true;
+        els.spotlightVideo.autoplay = true;
         els.spotlightVideo.muted = true;
         if (els.spotlightVideo.srcObject !== inEntry.remoteVideoStream) {
           els.spotlightVideo.srcObject = inEntry.remoteVideoStream;
@@ -2014,6 +2096,7 @@
           if (els.spotlightVideo.videoWidth > 0 && els.spotlightVideo.readyState >= 2) {
             state.webrtcVideoActive = true;
             els.spotlightCanvas.classList.add('hidden');
+            setViewerStatusOverlay(null);
             clearInterval(checkDecoded);
           }
         }, 120);
@@ -2111,12 +2194,22 @@
 
     if (targetPeerId === state.clientId) {
       els.spotlightStreamerName.textContent = `${state.username} (Sua Transmissão)`;
+      setViewerStatusOverlay(null);
       applySelfPreviewVisibility();
     } else {
       els.selfPreviewSaver.classList.add('hidden');
       els.btnHideSelfPreview.classList.add('hidden');
       const u = state.onlineUsers.get(targetPeerId);
       els.spotlightStreamerName.textContent = `Transmissão de ${u ? u.username : 'Amigo'}`;
+      if (!state.webrtcVideoActive) {
+        setViewerStatusOverlay(`⏳ Conectando à transmissão de ${u ? u.username : 'Amigo'}...`);
+      } else {
+        setViewerStatusOverlay(null);
+      }
+    }
+    if (els.spotlightViewport) {
+      els.spotlightViewport.classList.remove('idle-cursor');
+      els.spotlightViewport.classList.add('touch-active');
     }
     renderStageParticipants();
   }
@@ -2153,6 +2246,7 @@
     state.spotlightPeerId = null;
     state.webrtcVideoActive = false;
     state.pendingAudioUnlock = false;
+    setViewerStatusOverlay(null);
     if (els.btnMobileUnmute) els.btnMobileUnmute.classList.add('hidden');
     els.dockBtnLeave.classList.add('hidden');
     if (els.mobLiveDot) els.mobLiveDot.classList.add('hidden');
@@ -2216,7 +2310,7 @@
       els.spotlightViewport.classList.add('touch-active');
       if (idleMouseTimer) clearTimeout(idleMouseTimer);
       idleMouseTimer = setTimeout(() => {
-        if (state.spotlightPeerId) {
+        if (state.spotlightPeerId && (state.webrtcVideoActive || state.spotlightPeerId === state.clientId)) {
           els.spotlightViewport.classList.add('idle-cursor');
           els.spotlightViewport.classList.remove('touch-active');
         }
@@ -2395,10 +2489,7 @@
       localStorage.setItem('streamcord_bitrate', String(state.streamSettings.bitrateKbps));
       saveProfileToServer();
       updateLocalProfileUI();
-      const verTagEl = document.getElementById('sidebar-version-tag');
-  if (verTagEl) verTagEl.textContent = 'v' + APP_VERSION;
-  if (els.statLoss) els.statLoss.textContent = 'v' + APP_VERSION;
-  syncStreamModalControls();
+      syncStreamModalControls();
     }
 
     announcePresence(true);
@@ -2694,18 +2785,20 @@
       },
     ];
 
-    try {
-      const res = await fetch('/api/network-info?t=' + Date.now());
-      const data = await res.json();
-      if (data && Array.isArray(data.ips) && data.ips.length > 0) {
-        data.ips.forEach((ip) => {
-          urls.push({
-            label: `🏠 Rede Wi-Fi Local (${ip.name || 'LAN'})`,
-            url: `http://${ip.address}:${data.port}/?room=${encodeURIComponent(state.roomCode)}`,
+    if (IS_LOCAL_HOST) {
+      try {
+        const res = await fetch('/api/network-info?t=' + Date.now());
+        const data = await res.json();
+        if (data && Array.isArray(data.ips) && data.ips.length > 0) {
+          data.ips.forEach((ip) => {
+            urls.push({
+              label: `🏠 Rede Wi-Fi Local (${ip.name || 'LAN'})`,
+              url: `http://${ip.address}:${data.port}/?room=${encodeURIComponent(state.roomCode)}`,
+            });
           });
-        });
-      }
-    } catch (e) {}
+        }
+      } catch (e) {}
+    }
 
     if (els.mobileQrContainer) {
       els.mobileQrContainer.innerHTML = generateVisualQrSvg(cloudMobileUrl);
@@ -2841,10 +2934,7 @@
   }
 
   function openStreamPickerModal() {
-    const verTagEl = document.getElementById('sidebar-version-tag');
-  if (verTagEl) verTagEl.textContent = 'v' + APP_VERSION;
-  if (els.statLoss) els.statLoss.textContent = 'v' + APP_VERSION;
-  syncStreamModalControls();
+    syncStreamModalControls();
     els.streamModal.classList.remove('hidden');
     loadNativeSources();
   }
@@ -3138,6 +3228,7 @@
   };
 
   async function saveProfileToServer() {
+    if (!IS_LOCAL_HOST) return;
     try {
       const data = {
         username: state.username,
@@ -3156,6 +3247,7 @@
   }
 
   async function loadProfileFromServer() {
+    if (!IS_LOCAL_HOST) return;
     try {
       const res = await fetch('/api/profile');
       if (res.ok) {
@@ -3169,7 +3261,7 @@
             state.avatarColor = prof.avatarColor;
             localStorage.setItem('streamcord_color', prof.avatarColor);
           }
-          if (prof.roomCode) {
+          if (prof.roomCode && !roomFromUrl) {
             state.roomCode = prof.roomCode;
             localStorage.setItem('streamcord_room', prof.roomCode);
           }
@@ -3194,10 +3286,7 @@
             }
           }
           updateLocalProfileUI();
-          const verTagEl = document.getElementById('sidebar-version-tag');
-  if (verTagEl) verTagEl.textContent = 'v' + APP_VERSION;
-  if (els.statLoss) els.statLoss.textContent = 'v' + APP_VERSION;
-  syncStreamModalControls();
+          syncStreamModalControls();
         }
       }
     } catch (e) {}

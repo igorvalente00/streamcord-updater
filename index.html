@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#5865f2" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="manifest.json" />
@@ -130,7 +130,7 @@
             <div class="user-sub-status" id="local-quality-tag">Somente Tela + Áudio PC</div>
           </div>
         </div>
-        <span class="version-tag" id="sidebar-version-tag">v9.5.1</span>
+        <span class="version-tag" id="sidebar-version-tag">v9.5.2</span>
       </div>
     </aside>
 
@@ -225,6 +225,15 @@
                 🔊 Clique aqui (ou em qualquer lugar) para ativar o Som da Transmissão
               </button>
 
+              <!-- Banner de Status de Conexão para Espectadores (Nunca mostra tela preta vazia) -->
+              <div class="viewer-status-overlay hidden" id="viewer-status-overlay">
+                <div class="viewer-status-box">
+                  <div class="viewer-status-spinner"></div>
+                  <p id="viewer-status-text">⏳ Conectando à transmissão...</p>
+                  <button type="button" class="overlay-btn" id="btn-viewer-retry">🔄 Tentar Reconectar</button>
+                </div>
+              </div>
+
               <!-- Banner de Economia de GPU quando VOCÊ está transmitindo (Igual ao Discord!) -->
               <div class="self-preview-saver hidden" id="self-preview-saver">
                 <div class="saver-box">
@@ -296,7 +305,7 @@
               </div>
               <div class="hud-item">
                 <span class="hud-label">Versão do App</span>
-                <span class="hud-val" id="stat-loss">v9.5.1</span>
+                <span class="hud-val" id="stat-loss">v9.5.2</span>
               </div>
             </div>
           </div>
