@@ -1,6 +1,6 @@
 // StreamCord v9.3.1 — Motor Nativo Embutido (Zero Navegador) + 60 FPS Cravados em Jogos (maintain-framerate) + Auto-Updater Corrigido
 (() => {
-  const APP_VERSION = '9.4.1';
+  const APP_VERSION = '9.4.2';
 
   const RTC_CONFIG = {
     iceServers: [
@@ -687,8 +687,13 @@
   // 4. AUTO-UPDATER ESTILO DISCORD
   // =========================================================================
   async function checkAppUpdate(manualClick = false) {
+    const prevLabel = els.updateBtnLabel ? els.updateBtnLabel.textContent : '🔄 Atualizar';
+    if (manualClick && els.btnHeaderUpdate) {
+      els.btnHeaderUpdate.disabled = true;
+      if (els.updateBtnLabel) els.updateBtnLabel.textContent = '🔍 Verificando...';
+    }
     try {
-      const res = await fetch('/api/update-status?t=' + Date.now());
+      const res = await fetch('/api/update-status?t=' + Date.now(), { cache: 'no-store' });
       const data = await res.json();
       if (data && data.updateAvailable) {
         state.updateAvailable = true;
@@ -697,31 +702,45 @@
         els.updateBtnLabel.textContent = `⬇️ Atualizar v${data.latestVersion}`;
         if (manualClick) {
           await triggerInPlaceUpdate();
+          return;
         }
       } else if (manualClick) {
+        if (els.updateBtnLabel) els.updateBtnLabel.textContent = '🔄 Atualizar';
         showToast(`StreamCord já está na versão mais recente (v${APP_VERSION})!`, '✅');
       }
     } catch (e) {
       if (manualClick) {
+        if (els.updateBtnLabel) els.updateBtnLabel.textContent = prevLabel;
         showToast(`Versão Web/Mobile v${APP_VERSION} ativa!`, '✅');
+      }
+    } finally {
+      if (manualClick && els.btnHeaderUpdate && !state.isApplyingUpdate) {
+        els.btnHeaderUpdate.disabled = false;
       }
     }
   }
 
   async function triggerInPlaceUpdate() {
-    els.updateBtnLabel.textContent = '⏳ Atualizando...';
+    state.isApplyingUpdate = true;
+    els.updateBtnLabel.textContent = '⏳ Baixando...';
     els.btnHeaderUpdate.disabled = true;
     try {
-      const res = await fetch('/api/apply-update', { method: 'POST' });
+      const res = await fetch('/api/apply-update', { method: 'POST', cache: 'no-store' });
       const data = await res.json();
       if (data && data.ok) {
         els.updateBtnLabel.textContent = '🚀 Reiniciando...';
+        showToast('Atualização baixada! Reiniciando StreamCord...', '🚀');
       } else {
-        els.updateBtnLabel.textContent = '❌ Erro ao atualizar';
+        state.isApplyingUpdate = false;
+        els.updateBtnLabel.textContent = state.updateAvailable ? `⬇️ Atualizar v${state.latestVersion}` : '🔄 Atualizar';
         els.btnHeaderUpdate.disabled = false;
+        showToast(`Erro ao atualizar: ${(data && data.error) || 'Tente novamente'}`, '❌');
       }
     } catch (e) {
-      els.updateBtnLabel.textContent = '🚀 Reiniciando...';
+      state.isApplyingUpdate = false;
+      els.updateBtnLabel.textContent = state.updateAvailable ? `⬇️ Atualizar v${state.latestVersion}` : '🔄 Atualizar';
+      els.btnHeaderUpdate.disabled = false;
+      showToast('Não foi possível concluir a atualização agora.', '❌');
     }
   }
 
