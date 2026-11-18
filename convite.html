@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Entrar no StreamCord 2K60 — Convite Oficial</title>
+  <title>StreamCord 2K60 — Convite e Instalador Oficial</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="./manifest.json" />
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Inter, system-ui, sans-serif; }
     body {
@@ -20,9 +22,21 @@
       max-width: 100%;
       background: #18191e;
       border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 16px;
-      padding: 28px;
+      border-radius: 18px;
+      padding: 30px;
       box-shadow: 0 24px 64px rgba(0,0,0,0.65);
+    }
+    .header-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .app-logo {
+      width: 54px;
+      height: 54px;
+      border-radius: 14px;
+      flex-shrink: 0;
     }
     .badge {
       display: inline-block;
@@ -32,10 +46,10 @@
       font-weight: 800;
       padding: 4px 10px;
       border-radius: 99px;
-      margin-bottom: 12px;
+      margin-bottom: 6px;
       letter-spacing: 0.4px;
     }
-    h1 { font-size: 24px; margin-bottom: 6px; }
+    h1 { font-size: 22px; line-height: 1.25; }
     .sub { color: #b5bac1; font-size: 14px; line-height: 1.5; margin-bottom: 22px; }
     .option {
       background: #22242c;
@@ -49,72 +63,61 @@
       background: rgba(35, 165, 90, 0.08);
     }
     .opt-title { font-size: 15.5px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
-    .opt-desc { font-size: 13px; color: #b5bac1; line-height: 1.45; margin-bottom: 12px; }
-    .cmd-box {
-      background: #0d0e12;
-      border: 1px solid rgba(255,255,255,0.14);
-      border-radius: 8px;
-      padding: 10px 12px;
-      font-family: Consolas, monospace;
-      font-size: 12px;
-      color: #57f287;
-      word-break: break-all;
-      margin-bottom: 10px;
-    }
+    .opt-desc { font-size: 13px; color: #b5bac1; line-height: 1.5; margin-bottom: 14px; }
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
       width: 100%;
-      padding: 12px 16px;
-      border-radius: 8px;
+      padding: 13px 16px;
+      border-radius: 9px;
       border: none;
       font-weight: 700;
-      font-size: 14px;
+      font-size: 14.5px;
       cursor: pointer;
       text-decoration: none;
       color: #fff;
+      transition: filter 0.15s;
     }
+    .btn:hover { filter: brightness(1.08); }
     .btn-green { background: #23a55a; }
-    .btn-green:hover { background: #1e8e4d; }
     .btn-blurple { background: #5865f2; }
-    .btn-blurple:hover { background: #4752c4; }
-    .btn-dark { background: #313338; font-size: 12.5px; padding: 9px 14px; }
-    .steps { font-size: 12px; color: #949ba4; margin-top: 8px; }
-    .row { display: flex; gap: 10px; }
+    .btn-dark { background: #313338; font-size: 13px; padding: 10px 14px; }
+    .row { display: flex; gap: 10px; margin-top: 10px; }
+    .steps { font-size: 12px; color: #949ba4; margin-top: 10px; line-height: 1.45; }
   </style>
 </head>
 <body>
   <div class="card">
-    <span class="badge">CONVITE STREAMCORD 2K 60FPS • SALA <span id="room-label">IGOR-2K60</span></span>
-    <h1>Você foi convidado para assistir / transmitir tela!</h1>
-    <p class="sub">Transmissão em até <strong>2K 60FPS</strong> com áudio do jogo e <strong>Discord silenciado automaticamente</strong>.</p>
+    <div class="header-row">
+      <img src="./icon.svg" alt="StreamCord" class="app-logo" />
+      <div>
+        <span class="badge">CONVITE OFICIAL v9.2.0 • SALA <span id="room-label">IGOR-2K60</span></span>
+        <h1>Entrar no StreamCord 2K 60FPS</h1>
+      </div>
+    </div>
+    <p class="sub">Transmissão em até <strong>2K 60FPS (Hardware GPU)</strong> com áudio estéreo do jogo e <strong>Discord 100% silenciado na stream</strong>.</p>
 
     <div class="option recommended">
-      <div class="opt-title">⚡ Opção 1 (Recomendada no PC): Instalar e Abrir Sem Bloqueio do Windows</div>
+      <div class="opt-title">💻 Opção 1 (Recomendado para Windows): Instalador de 2 Cliques</div>
       <p class="opt-desc">
-        1. Clique no botão verde abaixo para copiar o comando.<br/>
-        2. Aperte <strong>Win + R</strong> no teclado, aperte <strong>Ctrl + V</strong> e dê <strong>Enter</strong>!<br/>
-        <em>O aplicativo cria o atalho "StreamCord 2K60" na sua Área de Trabalho e já abre direto sem tela azul do navegador.</em>
+        Baixe o instalador, dê <strong>2 cliques</strong> e pronto! Ele instala automaticamente no seu perfil (sem pedir senha de administrador), cria o ícone <strong>StreamCord 2K60</strong> na Área de Trabalho e já abre conectado.
       </p>
-      <div class="cmd-box" id="cmd-text">powershell -NoProfile -c "irm https://igorvalente00.github.io/streamcord-updater/install.ps1 | iex"</div>
-      <button class="btn btn-green" id="btn-copy">📋 Copiar Comando Rápido (Win + R)</button>
-    </div>
-
-    <div class="option">
-      <div class="opt-title">🌐 Opção 2: Abrir Agora no Navegador (PC ou Celular — Sem Baixar Nada)</div>
-      <p class="opt-desc">Funciona direto no Edge, Chrome ou celular conectado na mesma sala.</p>
-      <a class="btn btn-blurple" id="btn-web" href="./?room=IGOR-2K60">🚀 Entrar Agora pelo Navegador</a>
-    </div>
-
-    <div class="option">
-      <div class="opt-title">📦 Opção 3: Download Manual do Arquivo</div>
+      <a class="btn btn-green" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-Instalador.exe">⬇️ Baixar Instalador Oficial (2 Cliques)</a>
       <div class="row">
-        <a class="btn btn-dark" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-2K60.zip">⬇️ Baixar .ZIP</a>
-        <a class="btn btn-dark" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-2K60.exe">⬇️ Baixar .EXE</a>
+        <a class="btn btn-dark" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-2K60.zip">📦 Baixar em .ZIP</a>
+        <a class="btn btn-dark" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-2K60.exe">⚡ Versão Portátil (.EXE)</a>
       </div>
-      <div class="steps">Dica: No download manual pelo navegador, se o Windows perguntar na 1ª abertura, clique em <strong>Mais informações</strong> → <strong>Executar mesmo assim</strong>.</div>
+      <div class="steps">💡 <strong>Primeira vez no Windows?</strong> Se aparecer a janela informativa azul da Microsoft, basta clicar em <strong>Mais informações</strong> → <strong>Executar mesmo assim</strong>. Nas próximas vezes, abra pelo ícone na Área de Trabalho sem nenhum aviso!</div>
+    </div>
+
+    <div class="option">
+      <div class="opt-title">🌐 Opção 2: Entrar Agora Sem Baixar Nada (Web App / Celular / Zero Bloqueio)</div>
+      <p class="opt-desc">
+        Funciona instantaneamente no Edge, Chrome ou Celular com <strong>zero instalação de executável</strong> (ideal também se o Windows da empresa/fábrica tiver Controle de Aplicativos Inteligentes ativo).
+      </p>
+      <a class="btn btn-blurple" id="btn-web" href="./?room=IGOR-2K60">🚀 Abrir StreamCord Agora no Navegador</a>
     </div>
   </div>
 
@@ -123,14 +126,9 @@
     const room = (params.get('room') || 'IGOR-2K60').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
     document.getElementById('room-label').textContent = room;
     document.getElementById('btn-web').href = './?room=' + encodeURIComponent(room);
-
-    const cmd = 'powershell -NoProfile -c "irm https://igorvalente00.github.io/streamcord-updater/install.ps1 | iex"';
-    document.getElementById('btn-copy').onclick = () => {
-      navigator.clipboard.writeText(cmd);
-      const b = document.getElementById('btn-copy');
-      b.textContent = '✅ Comando Copiado! Agora aperte Win + R, Ctrl + V e Enter!';
-      setTimeout(() => { b.textContent = '📋 Copiar Comando Rápido (Win + R)'; }, 4000);
-    };
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
   </script>
 </body>
 </html>
