@@ -1,6 +1,6 @@
-// StreamCord v9.0.0 — Deadlock/FPS Turbo GPU + Áudio Universal (Win10/Win11/Web) + Instalador Sem Bloqueio
+// StreamCord v9.1.0 — Deadlock/FPS Turbo GPU + Áudio Universal (Win10/Win11/Web) + Perfil Permanente
 (() => {
-  const APP_VERSION = '9.0.0';
+  const APP_VERSION = '9.1.0';
 
   const RTC_CONFIG = {
     iceServers: [
@@ -23,10 +23,10 @@
   };
 
   const DEFAULT_CHANNELS = [
-    { id: 'gameplay-2k', name: '🎮 Gameplay 2K 60FPS', bitrate: '25 Mbps' },
-    { id: 'cinema-watch', name: '🎬 Sessão Cinema & Séries', bitrate: '20 Mbps' },
-    { id: 'dev-code', name: '💻 Código & Nitidez Ultra', bitrate: '15 Mbps' },
-    { id: 'lounge-geral', name: '🛋️ Resenha dos Amigos', bitrate: '12 Mbps' },
+    { id: 'gameplay-2k', name: '🎮 Gameplay 2K 60FPS', bitrate: '25 Mbps', defaultRes: '1440', defaultFps: 60, defaultKbps: 20000 },
+    { id: 'cinema-watch', name: '🎬 Sessão Cinema & Séries', bitrate: '20 Mbps', defaultRes: '1080', defaultFps: 60, defaultKbps: 16000 },
+    { id: 'dev-code', name: '💻 Código & Nitidez Ultra', bitrate: '15 Mbps', defaultRes: '1440', defaultFps: 60, defaultKbps: 15000 },
+    { id: 'lounge-geral', name: '🛋️ Resenha dos Amigos', bitrate: '12 Mbps', defaultRes: '1080', defaultFps: 60, defaultKbps: 10000 },
   ];
 
   const THEME_MODELS = [
@@ -1360,12 +1360,15 @@
     // 2. Se selecionou Tela 1 [Principal] (monitor:0) no Desktop, usa Zero-Copy DXGI Direto (getDisplayMedia)
     if (state.selectedSourceId === 'monitor:0' && state.hasNativeBackend && navigator.mediaDevices?.getDisplayMedia) {
       try {
+        const vConstraints = {
+          frameRate: { ideal: cfg.fps, max: cfg.fps },
+        };
+        if (cfg.resolution !== 'source' && resSpec && resSpec.heightNum > 0) {
+          vConstraints.width = { ideal: resSpec.width, max: resSpec.width };
+          vConstraints.height = { ideal: resSpec.height, max: resSpec.height };
+        }
         const dxgiStream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            width: { ideal: resSpec.width, max: resSpec.width },
-            height: { ideal: resSpec.height, max: resSpec.height },
-            frameRate: { ideal: cfg.fps, max: cfg.fps },
-          },
+          video: vConstraints,
           audio: includeDisplayAudio,
         });
         if (dxgiStream && dxgiStream.getVideoTracks().length > 0) {
@@ -1382,12 +1385,15 @@
     const wantAudio = cfg.audioMode !== 'none';
 
     if (state.selectedSourceId === 'web:display' && navigator.mediaDevices?.getDisplayMedia) {
+      const vConstraints = {
+        frameRate: { ideal: cfg.fps, max: cfg.fps },
+      };
+      if (cfg.resolution !== 'source' && resSpec && resSpec.heightNum > 0) {
+        vConstraints.width = { ideal: resSpec.width, max: resSpec.width };
+        vConstraints.height = { ideal: resSpec.height, max: resSpec.height };
+      }
       mediaStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { ideal: resSpec.width, max: resSpec.width },
-          height: { ideal: resSpec.height, max: resSpec.height },
-          frameRate: { ideal: cfg.fps, max: cfg.fps },
-        },
+        video: vConstraints,
         audio: wantAudio,
       });
     } else if (navigator.mediaDevices?.getUserMedia) {
@@ -1639,7 +1645,7 @@
             if (!params.encodings || !params.encodings.length) params.encodings = [{}];
             params.encodings[0].maxBitrate = targetBps;
             params.encodings[0].maxFramerate = state.streamSettings.fps;
-            params.degradationPreference = 'balanced';
+            params.degradationPreference = 'maintain-resolution';
             await sender.setParameters(params);
           } catch (e) {}
         }
@@ -1705,7 +1711,7 @@
           params.encodings[0].maxBitrate = targetBps;
           params.encodings[0].maxFramerate = state.streamSettings.fps;
           params.encodings[0].scaleResolutionDownBy = 1.0;
-          params.degradationPreference = 'balanced';
+          params.degradationPreference = 'maintain-resolution';
           await sender.setParameters(params);
         } catch (e) {}
       }
@@ -2245,6 +2251,20 @@
     els.stageTitle.textContent = ch.name;
     els.voiceCurrentChannelName.textContent = ch.name;
     playDiscordSound('join');
+
+    // Se não estiver transmitindo, alinha a resolução e bitrate recomendados da sala
+    if (!state.isStreaming && ch.defaultRes) {
+      state.streamSettings.resolution = ch.defaultRes;
+      state.streamSettings.fps = ch.defaultFps || 60;
+      state.streamSettings.bitrateKbps = ch.defaultKbps || 20000;
+      localStorage.setItem('streamcord_res', state.streamSettings.resolution);
+      localStorage.setItem('streamcord_fps', String(state.streamSettings.fps));
+      localStorage.setItem('streamcord_bitrate', String(state.streamSettings.bitrateKbps));
+      saveProfileToServer();
+      updateLocalProfileUI();
+      syncStreamModalControls();
+    }
+
     announcePresence(true);
     if (window.innerWidth <= 900) {
       setMobileTab('stage');
@@ -2732,6 +2752,7 @@
       state.streamSettings.preset = card.dataset.preset;
       localStorage.setItem('streamcord_preset', state.streamSettings.preset);
       updateLocalProfileUI();
+      saveProfileToServer();
     };
   });
 
@@ -2742,6 +2763,7 @@
       state.streamSettings.resolution = btn.dataset.res;
       localStorage.setItem('streamcord_res', state.streamSettings.resolution);
       updateLocalProfileUI();
+      saveProfileToServer();
     };
   });
 
@@ -2752,6 +2774,7 @@
       state.streamSettings.fps = Number(btn.dataset.fps);
       localStorage.setItem('streamcord_fps', String(state.streamSettings.fps));
       updateLocalProfileUI();
+      saveProfileToServer();
     };
   });
 
@@ -2760,6 +2783,7 @@
     state.streamSettings.bitrateKbps = kbps;
     localStorage.setItem('streamcord_bitrate', String(kbps));
     els.bitrateValueLabel.textContent = `${(kbps / 1000).toFixed(1)} Mbps`;
+    saveProfileToServer();
     if (state.isStreaming) {
       rebalanceViewerBitrates();
     }
@@ -2910,8 +2934,72 @@
     }
     updateLocalProfileUI();
     renderChannelsSidebar();
+    saveProfileToServer();
     els.inviteModal.classList.add('hidden');
   };
+
+  async function saveProfileToServer() {
+    try {
+      const data = {
+        username: state.username,
+        avatarColor: state.avatarColor,
+        roomCode: state.roomCode,
+        currentChannelId: state.currentChannelId,
+        theme: state.activeTheme,
+        streamSettings: state.streamSettings,
+      };
+      await fetch('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+    } catch (e) {}
+  }
+
+  async function loadProfileFromServer() {
+    try {
+      const res = await fetch('/api/profile');
+      if (res.ok) {
+        const prof = await res.json();
+        if (prof && typeof prof === 'object') {
+          if (prof.username) {
+            state.username = prof.username;
+            localStorage.setItem('streamcord_username', prof.username);
+          }
+          if (prof.avatarColor) {
+            state.avatarColor = prof.avatarColor;
+            localStorage.setItem('streamcord_color', prof.avatarColor);
+          }
+          if (prof.roomCode) {
+            state.roomCode = prof.roomCode;
+            localStorage.setItem('streamcord_room', prof.roomCode);
+          }
+          if (prof.theme) {
+            state.activeTheme = prof.theme;
+            localStorage.setItem('streamcord_theme', prof.theme);
+            applyThemeModel(state.activeTheme, false);
+          }
+          if (prof.streamSettings) {
+            Object.assign(state.streamSettings, prof.streamSettings);
+            if (prof.streamSettings.resolution) localStorage.setItem('streamcord_res', prof.streamSettings.resolution);
+            if (prof.streamSettings.fps) localStorage.setItem('streamcord_fps', String(prof.streamSettings.fps));
+            if (prof.streamSettings.preset) localStorage.setItem('streamcord_preset', prof.streamSettings.preset);
+            if (prof.streamSettings.bitrateKbps) localStorage.setItem('streamcord_bitrate', String(prof.streamSettings.bitrateKbps));
+          }
+          if (prof.currentChannelId && state.channels.some((c) => c.id === prof.currentChannelId)) {
+            state.currentChannelId = prof.currentChannelId;
+            const foundCh = state.channels.find((c) => c.id === prof.currentChannelId);
+            if (foundCh) {
+              els.stageTitle.textContent = foundCh.name;
+              els.voiceCurrentChannelName.textContent = foundCh.name;
+            }
+          }
+          updateLocalProfileUI();
+          syncStreamModalControls();
+        }
+      }
+    } catch (e) {}
+  }
 
   function escapeHtml(str) {
     return String(str || '')
@@ -2925,5 +3013,7 @@
   applyThemeModel(state.activeTheme, false);
   updateLocalProfileUI();
   renderChannelsSidebar();
-  connectCloudSignaling();
+  loadProfileFromServer().finally(() => {
+    connectCloudSignaling();
+  });
 })();
