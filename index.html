@@ -276,6 +276,14 @@
       <main class="center-column">
         <header class="room-header">
           <div class="room-header-left">
+            <button id="btn-mobile-channels-drawer" type="button" class="btn-icon mobile-only-btn" title="Canais e Participantes" aria-label="Abrir canais e participantes">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            </button>
+
             <div class="room-channel-label">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <polygon points="23 7 16 12 23 17 23 7" />
@@ -395,7 +403,6 @@
           <span id="voice-current-channel-name">Arena 2K</span>
           <span id="active-preset-pill"></span>
           <div id="header-channel-pills"></div>
-          <span id="mob-chat-badge"></span>
           <span id="sidebar-theme-name"></span>
         </div>
       </main>
@@ -426,6 +433,48 @@
           </button>
         </form>
       </aside>
+
+      <!-- BARRA INFERIOR MOBILE (VISÍVEL APENAS <= 900px) -->
+      <nav id="mobile-bottom-nav" class="mobile-bottom-nav" aria-label="Navegação mobile">
+        <button type="button" class="mob-nav-item active" data-tab="stage">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="4" width="20" height="14" rx="2" />
+            <path d="M8 20h8" />
+          </svg>
+          <span>Palco</span>
+        </button>
+        <button type="button" class="mob-nav-item" data-tab="channels">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+          <span>Canais</span>
+        </button>
+        <button id="mob-btn-share" type="button" class="mob-nav-item mob-nav-share">
+          <span id="mob-live-dot" class="mob-live-dot hidden"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="23 7 16 12 23 17 23 7" />
+            <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+          </svg>
+          <span id="mob-share-label">Transmitir</span>
+        </button>
+        <button type="button" class="mob-nav-item" data-tab="chat">
+          <span id="mob-chat-badge" class="mob-badge hidden">0</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <span>Chat</span>
+        </button>
+        <button id="mob-btn-lobby" type="button" class="mob-nav-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <polyline points="9 22 9 12 15 12 15 22" />
+          </svg>
+          <span>Salas</span>
+        </button>
+      </nav>
     </div>
 
     <!-- ====================================================================
@@ -816,11 +865,13 @@
 
         const railHome = document.getElementById('btn-rail-home');
         const railFavs = document.getElementById('rail-btn-favorites');
+        const mobBtnLobby = document.getElementById('mob-btn-lobby');
         const sidebarSettings = document.getElementById('btn-sidebar-settings');
         const openLobby = document.getElementById('btn-open-lobby');
         const streamSettings = document.getElementById('btn-stream-settings');
         if (railHome && openLobby) railHome.addEventListener('click', () => openLobby.click());
         if (railFavs && openLobby) railFavs.addEventListener('click', () => openLobby.click());
+        if (mobBtnLobby && openLobby) mobBtnLobby.addEventListener('click', () => openLobby.click());
         if (sidebarSettings && streamSettings) sidebarSettings.addEventListener('click', () => streamSettings.click());
       })();
     </script>

@@ -2745,3 +2745,295 @@ input:focus-visible,
   border: 1px dashed var(--border-subtle);
   border-radius: var(--radius-sm);
 }
+
+/* ==========================================================================
+   MOBILE WEB ADAPTATION (<= 900px) — BROADCAST DARK STUDIO MOBILE
+   ========================================================================== */
+.mobile-only-btn {
+  display: none;
+}
+
+.mobile-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .mobile-only-btn {
+    display: inline-flex;
+  }
+
+  .app-shell {
+    flex-direction: column;
+    width: 100vw;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  /* Tab switching on mobile */
+  body[data-mobile-tab="stage"] .left-column,
+  body[data-mobile-tab="stage"] #chat-drawer {
+    display: none !important;
+  }
+  body[data-mobile-tab="stage"] .center-column {
+    display: flex !important;
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+  }
+
+  body[data-mobile-tab="channels"] .center-column,
+  body[data-mobile-tab="channels"] #chat-drawer {
+    display: none !important;
+  }
+  body[data-mobile-tab="channels"] .left-column {
+    display: flex !important;
+    flex: 1 1 auto;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    border-right: none;
+  }
+  body[data-mobile-tab="channels"] .icon-rail {
+    display: none;
+  }
+  body[data-mobile-tab="channels"] .channels-sidebar {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  body[data-mobile-tab="chat"] .center-column,
+  body[data-mobile-tab="chat"] .left-column {
+    display: none !important;
+  }
+  body[data-mobile-tab="chat"] #chat-drawer {
+    display: flex !important;
+    flex: 1 1 auto;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: auto;
+    min-height: 0;
+    border-left: none;
+  }
+  body[data-mobile-tab="chat"] #btn-close-chat {
+    display: none;
+  }
+
+  /* Compact mobile room header */
+  .room-header {
+    height: 52px;
+    padding: 0 10px;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .room-header-left {
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
+  }
+  .room-channel-label {
+    font-size: 13.5px;
+    min-width: 0;
+  }
+  .room-channel-label span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 110px;
+  }
+  .header-divider {
+    display: none;
+  }
+  .room-code-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .room-header-right {
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  #btn-toggle-chat {
+    display: none;
+  }
+  .room-header-right .btn-sm {
+    padding: 6px 8px;
+    font-size: 11.5px;
+  }
+
+  /* Stage & Video Grid */
+  .video-stage {
+    padding: 10px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .multi-stream-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+  .stream-card {
+    min-height: 210px;
+  }
+  .stream-card-header {
+    padding: 8px 10px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .stream-controls-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  .participants-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+  }
+  .participant-card {
+    padding: 12px 10px;
+  }
+
+  /* Mobile Bottom Navigation Bar */
+  .mobile-bottom-nav {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-around;
+    width: 100%;
+    flex-shrink: 0;
+    background-color: var(--bg-rail);
+    border-top: 1px solid var(--border-subtle);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    z-index: 40;
+  }
+  .mob-nav-item {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 5px 4px;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    font-weight: 600;
+    transition: color var(--duration-fast) var(--ease-out),
+      background-color var(--duration-fast) var(--ease-out);
+  }
+  .mob-nav-item svg {
+    width: 20px;
+    height: 20px;
+  }
+  .mob-nav-item.active {
+    color: var(--accent);
+    background-color: var(--accent-soft);
+  }
+  .mob-nav-item.mob-nav-share {
+    color: var(--text-primary);
+  }
+  .mob-nav-item.mob-nav-share.is-live {
+    color: var(--status-live);
+    background-color: rgba(239, 68, 68, 0.14);
+  }
+  .mob-live-dot {
+    position: absolute;
+    top: 4px;
+    right: calc(50% - 16px);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: var(--status-live);
+    box-shadow: 0 0 6px var(--status-live);
+  }
+  .mob-badge {
+    position: absolute;
+    top: 2px;
+    right: calc(50% - 18px);
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background-color: var(--status-live);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Lobby & Modals on Mobile */
+  .lobby-overlay {
+    padding: 12px;
+    align-items: flex-start;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .lobby-shell {
+    padding: 16px;
+    border-radius: 14px;
+    margin: auto 0;
+  }
+  .lobby-topbar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .modal-backdrop {
+    padding: 10px;
+    align-items: flex-end;
+  }
+  .modal-dialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: 90dvh;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-body {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 14px;
+  }
+  .theme-popover {
+    position: fixed;
+    top: 58px;
+    right: 10px;
+    left: 10px;
+    width: auto;
+    max-width: 360px;
+    margin-left: auto;
+  }
+  .text-input {
+    font-size: 16px;
+  }
+  .chat-composer {
+    padding: 10px;
+  }
+  .mobile-unmute-banner {
+    width: calc(100% - 24px);
+    text-align: center;
+    font-size: 13px;
+    padding: 12px 14px;
+  }
+}
+
+@media (max-width: 540px) {
+  #btn-open-lobby,
+  #btn-studio-theme-popover,
+  #btn-invite-modal {
+    font-size: 0;
+    gap: 0;
+    padding: 7px;
+  }
+  #btn-open-lobby svg,
+  #btn-studio-theme-popover svg,
+  #btn-invite-modal svg {
+    width: 16px;
+    height: 16px;
+  }
+  .room-channel-label svg {
+    display: none;
+  }
+}

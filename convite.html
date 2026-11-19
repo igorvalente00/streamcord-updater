@@ -86,6 +86,11 @@
     .btn-dark { background: #313338; font-size: 13px; padding: 10px 14px; }
     .row { display: flex; gap: 10px; margin-top: 10px; }
     .steps { font-size: 12px; color: #949ba4; margin-top: 10px; line-height: 1.45; }
+    @media (max-width: 560px) {
+      .card { padding: 20px; border-radius: 14px; }
+      .row { flex-direction: column; }
+      h1 { font-size: 19px; }
+    }
   </style>
 </head>
 <body>
@@ -93,7 +98,7 @@
       <div class="header-row">
       <img src="./streamcord-icon.png" alt="StreamCord" class="app-logo" />
       <div>
-        <span class="badge">CONVITE OFICIAL v9.15.0 • SALA <span id="room-label">IGOR-2K60</span></span>
+        <span class="badge">CONVITE OFICIAL v9.15.1 • SALA <span id="room-label">IGOR-2K60</span></span>
         <h1 id="invite-heading">Conectando à Sala...</h1>
       </div>
     </div>
@@ -153,31 +158,43 @@
       }, 1400);
     }
 
-    window.addEventListener('blur', markAppOpened);
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) markAppOpened();
-    });
-
-    // Dispara o protocolo nativo streamcord:// imediatamente
-    setTimeout(() => {
-      try {
-        window.location.href = appDeepLink;
-      } catch (_) {}
-    }, 80);
-
-    // Se em 1.8s o navegador não abriu modal/app (não instalado), entra direto pelo navegador
-    let secs = 2;
-    countdownTimer = setInterval(() => {
-      secs = Math.max(0, secs - 1);
-      const el = document.getElementById('countdown-sec');
-      if (el) el.textContent = String(secs);
-    }, 900);
-
-    fallbackTimer = setTimeout(() => {
-      if (!appDetected && !document.hidden) {
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    if (isMobile) {
+      document.getElementById('invite-heading').textContent = 'Abrindo no Navegador Mobile...';
+      document.getElementById('invite-status-text').innerHTML =
+        '📱 Dispositivo móvel detectado. Entrando direto na sala <strong>' + room + '</strong> pela versão Web Mobile...';
+      const openAppBtn = document.getElementById('btn-open-app');
+      if (openAppBtn) openAppBtn.style.display = 'none';
+      setTimeout(() => {
         window.location.replace(webUrl);
-      }
-    }, 1900);
+      }, 350);
+    } else {
+      window.addEventListener('blur', markAppOpened);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) markAppOpened();
+      });
+
+      // Dispara o protocolo nativo streamcord:// imediatamente
+      setTimeout(() => {
+        try {
+          window.location.href = appDeepLink;
+        } catch (_) {}
+      }, 80);
+
+      // Se em 1.8s o navegador não abriu modal/app (não instalado), entra direto pelo navegador
+      let secs = 2;
+      countdownTimer = setInterval(() => {
+        secs = Math.max(0, secs - 1);
+        const el = document.getElementById('countdown-sec');
+        if (el) el.textContent = String(secs);
+      }, 900);
+
+      fallbackTimer = setTimeout(() => {
+        if (!appDetected && !document.hidden) {
+          window.location.replace(webUrl);
+        }
+      }, 1900);
+    }
   </script>
 </body>
 </html>
