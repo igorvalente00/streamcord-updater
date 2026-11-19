@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.14.0';
+  const APP_VERSION = '9.15.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -1435,11 +1435,13 @@
     }
 
     if (state.streamSettings.captureEngine !== 'legacy_csharp') {
+      const modeTitle = state.sourceTab === 'window' ? 'Janela específica do jogo / aplicativo' : 'Monitor / Tela inteira (DirectX 11 GPU)';
+      const readoutEl = document.getElementById('settings-source-readout');
+      if (readoutEl) readoutEl.textContent = state.sourceTab === 'window' ? 'Janela específica' : 'Tela inteira';
       els.sourcesGrid.innerHTML = `
         <div class="zero-copy-info-card">
-          <strong>⚡ Captura Direta na Placa de Vídeo (GPU Zero-Copy WGC / DXGI)</strong>
-          <p>Neste modo, o vídeo do seu jogo vai direto da VRAM da placa de vídeo para o chip de transmissão (sem JPEG e sem cópia na CPU) e o áudio do sistema continua vindo pelo WASAPI com o Discord silenciado.</p>
-          <p>Clique em <strong>🔴 Transmitir Ao Vivo</strong> abaixo para escolher a tela ou a janela do jogo no seletor nativo do Windows/GPU.</p>
+          <strong>${modeTitle}</strong>
+          <p>Ao clicar em <strong>Compartilhar Tela</strong>, o seletor nativo da placa de vídeo abrirá para você escolher o monitor ou jogo em 60 FPS.</p>
         </div>
       `;
       return;
@@ -3563,19 +3565,21 @@
 
   function appendChatMessage(m) {
     const div = document.createElement('div');
-    div.className = 'chat-msg';
-    const time = new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const initial = (m.username || 'A')[0].toUpperCase();
-    div.innerHTML = `
-      <div class="mini-avatar" style="background:${m.avatarColor}">${initial}</div>
-      <div class="chat-msg-body">
+    if (m.type === 'system') {
+      div.className = 'chat-msg-system';
+      div.textContent = m.text || '';
+    } else {
+      div.className = 'chat-msg';
+      const time = new Date(m.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const isSelf = m.senderId === state.clientId || m.username === state.username;
+      div.innerHTML = `
         <div class="chat-msg-meta">
-          <span class="chat-msg-author">${escapeHtml(m.username)}</span>
-          <span class="chat-msg-time">${time}</span>
+          <span class="chat-msg-author${isSelf ? ' is-self' : ''}">${escapeHtml(m.username || 'Amigo')}</span>
+          <span class="chat-msg-time mono">${time}</span>
         </div>
-        <div>${escapeHtml(m.text)}</div>
-      </div>
-    `;
+        <div class="chat-msg-text">${escapeHtml(m.text || '')}</div>
+      `;
+    }
     els.chatMessages.appendChild(div);
     els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
   }
@@ -3791,6 +3795,9 @@
     }
     if (els.bitrateValueLabel) {
       els.bitrateValueLabel.textContent = `${(state.streamSettings.bitrateKbps / 1000).toFixed(1)} Mbps`;
+    }
+    if (typeof window.__syncStudioSettingsUI === 'function') {
+      window.__syncStudioSettingsUI();
     }
   }
 
@@ -4261,12 +4268,13 @@
 
       const inp = document.createElement('input');
       inp.type = 'text';
+      inp.className = 'text-input';
       inp.value = ch.name;
       inp.maxLength = 38;
 
       const saveBtn = document.createElement('button');
       saveBtn.type = 'button';
-      saveBtn.className = 'cm-btn';
+      saveBtn.className = 'btn btn-secondary btn-sm';
       saveBtn.textContent = 'Salvar';
       saveBtn.onclick = () => {
         const nextName = inp.value.trim();
@@ -4282,7 +4290,7 @@
 
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
-      delBtn.className = 'cm-btn danger';
+      delBtn.className = 'btn btn-danger btn-sm';
       delBtn.textContent = 'Excluir';
       delBtn.onclick = () => {
         if (state.channels.length <= 1) {
@@ -4762,6 +4770,16 @@
       if (e.key === 'Enter' && btnLobbyCreateRoom) btnLobbyCreateRoom.click();
     });
   }
+
+  document.addEventListener('fullscreenchange', () => {
+    const isFs = Boolean(document.fullscreenElement);
+    if (IS_LOCAL_HOST) {
+      fetch('/api/fullscreen?enable=' + (isFs ? '1' : '0'), { cache: 'no-store' }).catch(() => {});
+    }
+    document.querySelectorAll('.btn-card-full').forEach((btn) => {
+      btn.classList.toggle('is-active', isFs);
+    });
+  });
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});

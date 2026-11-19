@@ -171,7 +171,7 @@
         <div class="channels-sidebar" id="channels-sidebar">
           <div class="sidebar-room-header" id="btn-header-room-code">
             <div class="sidebar-room-info">
-              <div class="sidebar-room-name">StreamCord <small id="sidebar-version-tag" class="mono" style="opacity:0.45;font-size:10px;">v9.14.0</small></div>
+              <div class="sidebar-room-name">StreamCord <small id="sidebar-version-tag" class="mono" style="opacity:0.45;font-size:10px;">v9.15.0</small></div>
               <div id="sidebar-room-code" class="sidebar-room-sub mono">IGOR-2K60</div>
             </div>
             <button id="btn-sidebar-settings" type="button" class="btn-icon" title="Ajustes de vídeo e áudio">
@@ -242,7 +242,7 @@
               </div>
               <div class="telemetry-line">
                 <span id="stat-resolution">1080p</span>
-                <span id="stat-loss">v9.14.0</span>
+                <span id="stat-loss">v9.15.0</span>
               </div>
               <button id="btn-close-hud" type="button" class="hidden"></button>
             </div>
@@ -429,82 +429,134 @@
     </div>
 
     <!-- ====================================================================
-         3. MODAL: CONFIGURAÇÕES DA STREAM
+         3. MODAL: CONFIGURAÇÕES DA STREAM (100% MODELO GOOGLE AI STUDIO)
          ==================================================================== -->
-    <div id="stream-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
-      <div class="modal-dialog" style="max-width:600px;">
+    <div id="stream-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-settings-title">
+      <div class="modal-dialog">
         <div class="modal-header">
           <div>
-            <h2 class="modal-title">Configurações da Stream</h2>
+            <h2 id="modal-settings-title" class="modal-title">Configurações da Stream</h2>
             <p class="modal-subtitle">Fonte de captura, resolução, taxa de quadros, bitrate e áudio</p>
           </div>
-          <button id="btn-close-stream-modal" type="button" class="btn-icon" title="Fechar">✕</button>
+          <button id="btn-close-stream-modal" type="button" class="btn-icon" title="Fechar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
         </div>
 
         <div class="modal-body">
+          <!-- Fonte da Transmissão -->
           <div class="setting-block">
             <div class="setting-row-header">
               <span class="field-label field-label-inline">O que transmitir</span>
-              <button id="btn-refresh-sources" type="button" class="btn btn-ghost btn-sm">Atualizar Telas</button>
+              <span id="settings-source-readout" class="setting-value-readout">Seletor Nativo GPU</span>
             </div>
-            <div class="segmented-control">
+            <div class="segmented-control" role="group" aria-label="Tipo de captura">
               <button id="tab-monitors" type="button" class="segmented-btn is-active">Tela inteira</button>
               <button id="tab-windows" type="button" class="segmented-btn">Janela específica</button>
-              <button id="tab-browser-cam" type="button" class="segmented-btn">Padrão</button>
+              <button id="tab-browser-cam" type="button" class="segmented-btn hidden">Padrão</button>
             </div>
-            <div id="sources-grid" class="sources-grid"></div>
+            <button id="btn-refresh-sources" type="button" class="hidden"></button>
+            <div id="sources-grid" class="source-target-list"></div>
           </div>
 
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div class="setting-block">
-              <label for="resolution-select" class="field-label">Resolução de captura</label>
-              <select id="resolution-select" class="discord-select">
-                <option value="720">720p HD</option>
-                <option value="1080" selected>1080p FHD</option>
-                <option value="1440">2K 1440p</option>
-                <option value="source">Fonte Nativa</option>
-              </select>
-            </div>
-            <div class="setting-block">
-              <label for="fps-select" class="field-label">Taxa de quadros (FPS)</label>
-              <select id="fps-select" class="discord-select">
-                <option value="30">30 FPS</option>
-                <option value="60" selected>60 FPS</option>
-              </select>
-            </div>
-          </div>
-
+          <!-- Resolução -->
           <div class="setting-block">
             <div class="setting-row-header">
-              <label for="bitrate-slider" class="field-label field-label-inline">Bitrate de vídeo (P2P)</label>
+              <span class="field-label field-label-inline">Resolução de captura</span>
+              <span id="settings-res-readout" class="setting-value-readout mono">1920 × 1080</span>
+            </div>
+            <div class="segmented-control" role="group" aria-label="Resolução">
+              <button type="button" class="segmented-btn" data-res-btn="720">720p HD</button>
+              <button type="button" class="segmented-btn is-active" data-res-btn="1080">1080p FHD</button>
+              <button type="button" class="segmented-btn" data-res-btn="1440">2K 1440p</button>
+            </div>
+          </div>
+
+          <!-- FPS -->
+          <div class="setting-block">
+            <div class="setting-row-header">
+              <span class="field-label field-label-inline">Taxa de quadros (FPS)</span>
+              <span id="settings-fps-readout" class="setting-value-readout mono">60 FPS</span>
+            </div>
+            <div class="segmented-control" role="group" aria-label="Taxa de quadros">
+              <button type="button" class="segmented-btn" data-fps-btn="30">30 FPS</button>
+              <button type="button" class="segmented-btn is-active" data-fps-btn="60">60 FPS</button>
+            </div>
+          </div>
+
+          <!-- Bitrate -->
+          <div class="setting-block">
+            <div class="setting-row-header">
+              <label for="bitrate-slider" class="field-label field-label-inline">Bitrate de vídeo (CBR / GPU)</label>
               <span id="bitrate-value-label" class="setting-value-readout mono">8.0 Mbps</span>
             </div>
-            <input id="bitrate-slider" type="range" class="bitrate-slider" min="2000" max="25000" step="1000" value="8000" />
-          </div>
-
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-            <div class="setting-block">
-              <label for="audio-mode-select" class="field-label">Modo de Áudio</label>
-              <select id="audio-mode-select" class="discord-select">
-                <option value="pc_no_discord" selected>Áudio do dispositivo (Discord silenciado)</option>
-                <option value="window_only">Áudio da janela</option>
-                <option value="pc_all">Todo áudio do PC</option>
-                <option value="none">Somente vídeo (sem áudio)</option>
-              </select>
-            </div>
-            <div class="setting-block">
-              <label for="preset-select" class="field-label">Codec de vídeo</label>
-              <select id="preset-select" class="discord-select">
-                <option value="motion" selected>H.264 Hardware GPU</option>
-                <option value="av1">AV1 (Econômico)</option>
-                <option value="vp8">VP8 (Compatibilidade)</option>
-              </select>
+            <input id="bitrate-slider" type="range" class="bitrate-slider" min="4000" max="25000" step="1000" value="8000" />
+            <div class="bitrate-presets mono">
+              <button type="button" class="preset-btn is-active" data-bitrate-kbps="8000">8 Mbps</button>
+              <button type="button" class="preset-btn" data-bitrate-kbps="14000">14 Mbps</button>
+              <button type="button" class="preset-btn" data-bitrate-kbps="18000">18 Mbps</button>
+              <button type="button" class="preset-btn" data-bitrate-kbps="25000">25 Mbps</button>
             </div>
           </div>
 
-          <select id="capture-engine-select" class="hidden">
-            <option value="gpu_zerocopy" selected>GPU Zero-Copy</option>
-          </select>
+          <!-- Modo de Áudio (Radio Cards Google AI Studio) -->
+          <div class="setting-block">
+            <span class="field-label field-label-inline">Modo de Áudio</span>
+            <div id="audio-mode-list" class="audio-mode-list">
+              <label class="audio-option is-selected" data-audio-card="pc_no_discord">
+                <input type="radio" name="studio-audio-mode" value="pc_no_discord" checked />
+                <div>
+                  <div class="audio-option-title">Áudio do dispositivo</div>
+                  <div class="audio-option-desc">Captura o áudio padrão do computador (Discord silenciado automaticamente).</div>
+                </div>
+              </label>
+              <label class="audio-option" data-audio-card="window_only">
+                <input type="radio" name="studio-audio-mode" value="window_only" />
+                <div>
+                  <div class="audio-option-title">Áudio da janela</div>
+                  <div class="audio-option-desc">Captura apenas o áudio emitido pelo aplicativo ou janela selecionada.</div>
+                </div>
+              </label>
+              <label class="audio-option" data-audio-card="none">
+                <input type="radio" name="studio-audio-mode" value="none" />
+                <div>
+                  <div class="audio-option-title">Somente vídeo (sem áudio)</div>
+                  <div class="audio-option-desc">Transmite apenas a imagem sem capturar faixas de áudio.</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Selects ocultos sincronizados com a engine app.js -->
+          <div class="hidden">
+            <select id="resolution-select">
+              <option value="720">720p HD</option>
+              <option value="1080" selected>1080p FHD</option>
+              <option value="1440">2K 1440p</option>
+              <option value="source">Fonte Nativa</option>
+            </select>
+            <select id="fps-select">
+              <option value="30">30 FPS</option>
+              <option value="60" selected>60 FPS</option>
+            </select>
+            <select id="audio-mode-select">
+              <option value="pc_no_discord" selected>pc_no_discord</option>
+              <option value="window_only">window_only</option>
+              <option value="pc_all">pc_all</option>
+              <option value="none">none</option>
+            </select>
+            <select id="preset-select">
+              <option value="motion" selected>motion</option>
+              <option value="av1">av1</option>
+              <option value="vp8">vp8</option>
+            </select>
+            <select id="capture-engine-select">
+              <option value="gpu_zerocopy" selected>gpu_zerocopy</option>
+            </select>
+          </div>
         </div>
 
         <div class="modal-footer">
@@ -592,33 +644,49 @@
       </div>
     </div>
 
-    <!-- MODAL GERENCIAR CANAIS -->
+    <!-- MODAL GERENCIAR CANAIS (Padrão Broadcast Dark Studio) -->
     <div id="channel-manager-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
       <div class="modal-dialog">
         <div class="modal-header">
-          <h2 class="modal-title">Gerenciar Canais</h2>
-          <button id="btn-close-channel-manager" type="button" class="btn-icon">✕</button>
+          <div>
+            <h2 class="modal-title">Gerenciar Canais</h2>
+            <p class="modal-subtitle">Crie, renomeie ou remova canais de transmissão da sala</p>
+          </div>
+          <button id="btn-close-channel-manager" type="button" class="btn-icon" title="Fechar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
         </div>
         <div class="modal-body">
-          <div style="display:flex;gap:8px;">
-            <select id="new-channel-emoji" class="discord-select" style="width:70px;">
-              <option value="🎮">🎮</option>
-              <option value="🎬">🎬</option>
-              <option value="💻">💻</option>
-              <option value="🔥">🔥</option>
-            </select>
-            <input id="new-channel-name" type="text" class="text-input" placeholder="Nome do canal..." maxlength="36" />
-            <button id="btn-create-channel" type="button" class="btn btn-primary">Criar</button>
+          <div class="setting-block">
+            <span class="field-label field-label-inline">Novo canal de stream</span>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <select id="new-channel-emoji" class="hidden">
+                <option value="" selected></option>
+              </select>
+              <input id="new-channel-name" type="text" class="text-input" placeholder="Ex.: Squad Competitivo" maxlength="36" />
+              <button id="btn-create-channel" type="button" class="btn btn-primary" style="flex-shrink:0;">Criar</button>
+            </div>
           </div>
-          <div id="channel-manager-list"></div>
-          <div id="banned-users-list"></div>
+
+          <div class="setting-block">
+            <span class="field-label field-label-inline">Canais atuais</span>
+            <div id="channel-manager-list" class="cm-list"></div>
+          </div>
+
+          <div class="setting-block">
+            <span class="field-label field-label-inline">Usuários banidos da sala</span>
+            <div id="banned-users-list" class="cm-banned-list"></div>
+          </div>
         </div>
       </div>
     </div>
 
     <div class="discord-context-menu hidden" id="discord-context-menu"></div>
 
-    <!-- Controller leve do Popover Broadcast Dark Studio & Atalhos do Rail -->
+    <!-- Controller leve do Popover Broadcast Dark Studio, Modais & Segmented Controls -->
     <script>
       (() => {
         const root = document.documentElement;
@@ -663,6 +731,88 @@
             });
           });
         }
+
+        // Fechar qualquer modal ao clicar fora dele (no backdrop escuro)
+        document.querySelectorAll('.modal-backdrop').forEach((backdrop) => {
+          backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) backdrop.classList.add('hidden');
+          });
+        });
+        const lobbyOverlayEl = document.getElementById('room-lobby-overlay');
+        if (lobbyOverlayEl) {
+          lobbyOverlayEl.addEventListener('click', (e) => {
+            const closeBtn = document.getElementById('btn-close-lobby');
+            if (e.target === lobbyOverlayEl && closeBtn && !closeBtn.classList.contains('hidden')) {
+              lobbyOverlayEl.classList.add('hidden');
+            }
+          });
+        }
+
+        // Sincronização dos controles Google AI Studio no Modal de Stream Settings
+        const RES_PIXELS = { '720': '1280 × 720', '1080': '1920 × 1080', '1440': '2560 × 1440', source: 'Fonte Nativa' };
+        function syncStudioSettingsUI() {
+          const resSel = document.getElementById('resolution-select');
+          const fpsSel = document.getElementById('fps-select');
+          const audSel = document.getElementById('audio-mode-select');
+          const bitSl = document.getElementById('bitrate-slider');
+          if (resSel) {
+            const val = resSel.value || '1080';
+            document.querySelectorAll('[data-res-btn]').forEach((b) => b.classList.toggle('is-active', b.dataset.resBtn === val));
+            const ro = document.getElementById('settings-res-readout');
+            if (ro) ro.textContent = RES_PIXELS[val] || '1920 × 1080';
+          }
+          if (fpsSel) {
+            const val = String(fpsSel.value || '60');
+            document.querySelectorAll('[data-fps-btn]').forEach((b) => b.classList.toggle('is-active', b.dataset.fpsBtn === val));
+            const ro = document.getElementById('settings-fps-readout');
+            if (ro) ro.textContent = val + ' FPS';
+          }
+          if (bitSl) {
+            const val = String(bitSl.value);
+            document.querySelectorAll('[data-bitrate-kbps]').forEach((b) => b.classList.toggle('is-active', b.dataset.bitrateKbps === val));
+          }
+          if (audSel) {
+            const val = audSel.value === 'pc_all' ? 'pc_no_discord' : (audSel.value || 'pc_no_discord');
+            document.querySelectorAll('[data-audio-card]').forEach((lbl) => {
+              const active = lbl.dataset.audioCard === val;
+              lbl.classList.toggle('is-selected', active);
+              const inp = lbl.querySelector('input[type="radio"]');
+              if (inp) inp.checked = active;
+            });
+          }
+        }
+        window.__syncStudioSettingsUI = syncStudioSettingsUI;
+
+        document.querySelectorAll('[data-res-btn]').forEach((b) => {
+          b.addEventListener('click', () => {
+            const sel = document.getElementById('resolution-select');
+            if (sel) { sel.value = b.dataset.resBtn; sel.dispatchEvent(new Event('change')); }
+            syncStudioSettingsUI();
+          });
+        });
+        document.querySelectorAll('[data-fps-btn]').forEach((b) => {
+          b.addEventListener('click', () => {
+            const sel = document.getElementById('fps-select');
+            if (sel) { sel.value = b.dataset.fpsBtn; sel.dispatchEvent(new Event('change')); }
+            syncStudioSettingsUI();
+          });
+        });
+        document.querySelectorAll('[data-bitrate-kbps]').forEach((b) => {
+          b.addEventListener('click', () => {
+            const sl = document.getElementById('bitrate-slider');
+            if (sl) { sl.value = b.dataset.bitrateKbps; sl.dispatchEvent(new Event('input')); }
+            syncStudioSettingsUI();
+          });
+        });
+        const bitSliderEl = document.getElementById('bitrate-slider');
+        if (bitSliderEl) bitSliderEl.addEventListener('input', syncStudioSettingsUI);
+        document.querySelectorAll('[data-audio-card]').forEach((lbl) => {
+          lbl.addEventListener('click', () => {
+            const sel = document.getElementById('audio-mode-select');
+            if (sel) { sel.value = lbl.dataset.audioCard; sel.dispatchEvent(new Event('change')); }
+            syncStudioSettingsUI();
+          });
+        });
 
         const railHome = document.getElementById('btn-rail-home');
         const railFavs = document.getElementById('rail-btn-favorites');
