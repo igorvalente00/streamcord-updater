@@ -1,6 +1,6 @@
-// StreamCord v9.11.0 — Economia Extrema de TURN (P2P-First + IPv6 + Cap por Resolução + Auto-Stop)
+// StreamCord v9.12.0 — Lobby de Salas (Criar/Entrar/Favoritas) + Deep Link streamcord:// + Economia TURN
 (() => {
-  const APP_VERSION = '9.11.0';
+  const APP_VERSION = '9.12.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -4438,6 +4438,203 @@
     ]);
   });
 
+  // =========================================================================
+  // LOBBY DE SALAS (Criar Sala Aleatória / Entrar / Favoritar Sala)
+  // =========================================================================
+  const lobbyOverlay = document.getElementById('room-lobby-overlay');
+  const lobbyUsernameInput = document.getElementById('lobby-username-input');
+  const lobbyCreateNameInput = document.getElementById('lobby-create-name');
+  const btnLobbyCreateRoom = document.getElementById('btn-lobby-create-room');
+  const lobbyJoinInput = document.getElementById('lobby-join-input');
+  const btnLobbyJoinRoom = document.getElementById('btn-lobby-join-room');
+  const lobbyFavoritesList = document.getElementById('lobby-favorites-list');
+  const btnFavoriteRoom = document.getElementById('btn-favorite-room');
+  const favoriteRoomIcon = document.getElementById('favorite-room-icon');
+  const favoriteRoomLabel = document.getElementById('favorite-room-label');
+  const btnOpenLobby = document.getElementById('btn-open-lobby');
+
+  function generateRandomRoomCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = 'STRM-';
+    for (let i = 0; i < 4; i++) {
+      code += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return code;
+  }
+
+  function parseRoomCodeInput(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    let s = raw.trim();
+    const roomMatch = s.match(/[?&]room=([^&#]+)/i) || s.match(/streamcord:\/\/(?:room\/)?([^/?#]+)/i);
+    if (roomMatch && roomMatch[1]) {
+      s = decodeURIComponent(roomMatch[1]);
+    }
+    return s.toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 24);
+  }
+
+  function getFavoriteRooms() {
+    try {
+      const raw = JSON.parse(localStorage.getItem('streamcord_favorites') || '[]');
+      return Array.isArray(raw) ? raw.filter((r) => typeof r === 'string' && r.trim()) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveFavoriteRooms(list) {
+    try {
+      localStorage.setItem('streamcord_favorites', JSON.stringify(list));
+    } catch (_) {}
+  }
+
+  function isRoomFavorited(code) {
+    return getFavoriteRooms().includes(code);
+  }
+
+  function updateFavoriteButtonUI() {
+    const fav = isRoomFavorited(state.roomCode);
+    if (btnFavoriteRoom) btnFavoriteRoom.classList.toggle('favorited', fav);
+    if (favoriteRoomIcon) favoriteRoomIcon.textContent = fav ? '⭐' : '☆';
+    if (favoriteRoomLabel) favoriteRoomLabel.textContent = fav ? 'Favorita' : 'Favoritar';
+  }
+
+  function toggleFavoriteRoom(code = state.roomCode) {
+    const list = getFavoriteRooms();
+    const idx = list.indexOf(code);
+    if (idx >= 0) {
+      list.splice(idx, 1);
+      saveFavoriteRooms(list);
+      showToast(`Sala ${code} removida das favoritas.`, '☆');
+    } else {
+      list.unshift(code);
+      saveFavoriteRooms(list.slice(0, 12));
+      showToast(`Sala ${code} adicionada às favoritas!`, '⭐');
+    }
+    updateFavoriteButtonUI();
+    renderLobbyFavorites();
+  }
+
+  function renderLobbyFavorites() {
+    if (!lobbyFavoritesList) return;
+    const favs = getFavoriteRooms();
+    if (favs.length === 0) {
+      lobbyFavoritesList.innerHTML =
+        '<div class="lobby-fav-empty">Nenhuma sala favoritada ainda. Entre em uma sala e clique em ☆ Favoritar no topo!</div>';
+      return;
+    }
+    lobbyFavoritesList.innerHTML = '';
+    for (const code of favs) {
+      const item = document.createElement('div');
+      item.className = 'lobby-fav-item';
+      item.innerHTML = `
+        <button type="button" class="lobby-fav-enter" title="Entrar na sala ${escapeHtml(code)}">⭐ ${escapeHtml(code)}</button>
+        <button type="button" class="lobby-fav-remove" title="Remover dos favoritos">✕</button>
+      `;
+      item.querySelector('.lobby-fav-enter').onclick = () => {
+        playDiscordSound('click');
+        enterRoomFromLobby(code, false);
+      };
+      item.querySelector('.lobby-fav-remove').onclick = () => {
+        playDiscordSound('click');
+        const next = getFavoriteRooms().filter((x) => x !== code);
+        saveFavoriteRooms(next);
+        updateFavoriteButtonUI();
+        renderLobbyFavorites();
+      };
+      lobbyFavoritesList.appendChild(item);
+    }
+  }
+
+  function enterRoomFromLobby(roomCode, autoCopyInvite = false) {
+    const cleanCode = parseRoomCodeInput(roomCode) || generateRandomRoomCode();
+    if (lobbyUsernameInput && lobbyUsernameInput.value.trim()) {
+      state.username = lobbyUsernameInput.value.trim().slice(0, 24);
+      localStorage.setItem('streamcord_username', state.username);
+    }
+    if (state.isStreaming) stopScreenShare(true);
+    closeAllWatchedStreams();
+
+    state.roomCode = cleanCode;
+    localStorage.setItem('streamcord_room', state.roomCode);
+    state.onlineUsers.clear();
+    loadRoomChannels();
+    saveProfileToServer();
+    updateLocalProfileUI();
+    updateFavoriteButtonUI();
+    renderChannelsSidebar();
+
+    if (lobbyOverlay) lobbyOverlay.classList.add('hidden');
+    connectCloudSignaling();
+
+    if (autoCopyInvite) {
+      const inviteUrl = `https://igorvalente00.github.io/streamcord-updater/convite.html?room=${encodeURIComponent(state.roomCode)}`;
+      try { navigator.clipboard.writeText(inviteUrl); } catch (_) {}
+      showToast(`Sala ${state.roomCode} criada! Link de convite copiado.`, '✨');
+    } else {
+      showToast(`Conectado à sala ${state.roomCode}!`, '🚀');
+    }
+  }
+
+  function openRoomLobby(disconnectCurrent = true) {
+    if (disconnectCurrent) {
+      if (state.isStreaming) stopScreenShare(true);
+      closeAllWatchedStreams();
+      if (state.cloudMqtt) {
+        try { state.cloudMqtt.close(); } catch (_) {}
+        state.cloudMqtt = null;
+      }
+      state.cloudConnected = false;
+      state.onlineUsers.clear();
+    }
+    if (lobbyUsernameInput) lobbyUsernameInput.value = state.username;
+    if (lobbyJoinInput) lobbyJoinInput.value = '';
+    if (lobbyCreateNameInput) lobbyCreateNameInput.value = '';
+    renderLobbyFavorites();
+    if (lobbyOverlay) lobbyOverlay.classList.remove('hidden');
+  }
+
+  if (btnFavoriteRoom) {
+    btnFavoriteRoom.onclick = () => {
+      playDiscordSound('click');
+      toggleFavoriteRoom(state.roomCode);
+    };
+  }
+  if (btnOpenLobby) {
+    btnOpenLobby.onclick = () => {
+      playDiscordSound('click');
+      openRoomLobby(true);
+    };
+  }
+  if (btnLobbyCreateRoom) {
+    btnLobbyCreateRoom.onclick = () => {
+      playDiscordSound('click');
+      const custom = parseRoomCodeInput(lobbyCreateNameInput ? lobbyCreateNameInput.value : '');
+      const code = custom || generateRandomRoomCode();
+      enterRoomFromLobby(code, true);
+    };
+  }
+  if (btnLobbyJoinRoom) {
+    btnLobbyJoinRoom.onclick = () => {
+      const code = parseRoomCodeInput(lobbyJoinInput ? lobbyJoinInput.value : '');
+      if (!code) {
+        showToast('Digite um código de sala ou cole um link válido!', '⚠️');
+        return;
+      }
+      playDiscordSound('click');
+      enterRoomFromLobby(code, false);
+    };
+  }
+  if (lobbyJoinInput) {
+    lobbyJoinInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && btnLobbyJoinRoom) btnLobbyJoinRoom.click();
+    });
+  }
+  if (lobbyCreateNameInput) {
+    lobbyCreateNameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && btnLobbyCreateRoom) btnLobbyCreateRoom.click();
+    });
+  }
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
@@ -4448,10 +4645,16 @@
   syncStreamModalControls();
   applyThemeModel(state.activeTheme, false);
   updateLocalProfileUI();
+  updateFavoriteButtonUI();
   renderChannelsSidebar();
   loadProfileFromServer().finally(() => {
     void ensureTurnQuotaChecked();
     void ensureIceServersReady();
-    connectCloudSignaling();
+    if (roomFromUrl && roomFromUrl.trim()) {
+      if (lobbyOverlay) lobbyOverlay.classList.add('hidden');
+      connectCloudSignaling();
+    } else {
+      openRoomLobby(false);
+    }
   });
 })();

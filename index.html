@@ -167,6 +167,14 @@
           <button class="header-pill-btn" id="btn-header-invite" title="Código da Sala e Convite">
             <span>🔗 <strong id="header-room-label">IGOR-2K60</strong></span>
           </button>
+          <button class="header-pill-btn" id="btn-favorite-room" title="Favoritar ou desfavoritar esta sala">
+            <span id="favorite-room-icon">☆</span>
+            <span class="hide-on-xs" id="favorite-room-label">Favoritar</span>
+          </button>
+          <button class="header-pill-btn" id="btn-open-lobby" title="Voltar ao Lobby (Criar ou Entrar em outra Sala)">
+            <span>🚪</span>
+            <span class="hide-on-xs">Salas</span>
+          </button>
           <button class="header-pill-btn" id="btn-header-stats" title="Diagnóstico de Vídeo e WebRTC">
             <span class="dot-live"></span>
             <span class="hide-on-xs">Telemetria</span>
@@ -248,7 +256,7 @@
               </div>
               <div class="hud-item">
                 <span class="hud-label">Versão do App</span>
-                <span class="hud-val" id="stat-loss">v9.11.0</span>
+                <span class="hud-val" id="stat-loss">v9.12.0</span>
               </div>
             </div>
           </div>
@@ -591,6 +599,49 @@
           <label class="section-label">USUÁRIOS BANIDOS DA SALA</label>
           <div class="banned-users-list" id="banned-users-list"></div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOBBY INICIAL DE SALAS (Criar Sala / Entrar / Favoritas) -->
+  <div class="room-lobby-overlay hidden" id="room-lobby-overlay">
+    <div class="room-lobby-card">
+      <div class="lobby-header">
+        <div class="lobby-brand">
+          <img src="icon.svg" alt="StreamCord" class="lobby-logo" />
+          <div>
+            <h2>StreamCord 2K 60FPS</h2>
+            <p>Escolha criar uma nova sala privada ou entrar em uma existente</p>
+          </div>
+        </div>
+        <div class="lobby-nick-wrap">
+          <label for="lobby-username-input">Seu Apelido</label>
+          <input type="text" id="lobby-username-input" class="discord-input" placeholder="Seu nome na sala..." maxlength="24" />
+        </div>
+      </div>
+
+      <div class="lobby-actions-grid">
+        <div class="lobby-action-box create-box">
+          <div class="lobby-box-title">➕ Criar Nova Sala</div>
+          <p class="lobby-box-desc">Gera um código aleatório exclusivo na hora (ou use um nome personalizado) e já copia o convite.</p>
+          <input type="text" id="lobby-create-name" class="discord-input" placeholder="Opcional: nome (vazio = aleatório)" maxlength="20" />
+          <button type="button" class="btn-go-live lobby-btn-primary" id="btn-lobby-create-room">✨ Criar Nova Sala</button>
+        </div>
+
+        <div class="lobby-action-box join-box">
+          <div class="lobby-box-title">🔑 Entrar em Sala Existente</div>
+          <p class="lobby-box-desc">Digite o código da sala ou cole o link de convite enviado pelo seu amigo.</p>
+          <input type="text" id="lobby-join-input" class="discord-input" placeholder="Código (ex: STRM-4821) ou Link..." maxlength="160" />
+          <button type="button" class="btn-secondary lobby-btn-join" id="btn-lobby-join-room">🚀 Entrar na Sala</button>
+        </div>
+      </div>
+
+      <div class="lobby-favorites-section">
+        <div class="lobby-fav-header">
+          <span>⭐ Salas Favoritas</span>
+          <small>Clique em ☆ Favoritar dentro de qualquer sala para salvá-la aqui</small>
+        </div>
+        <div class="lobby-favorites-list" id="lobby-favorites-list"></div>
       </div>
     </div>
   </div>

@@ -90,45 +90,94 @@
 </head>
 <body>
   <div class="card">
-    <div class="header-row">
+      <div class="header-row">
       <img src="./icon.svg" alt="StreamCord" class="app-logo" />
       <div>
-        <span class="badge">CONVITE OFICIAL v9.7.0 • SALA <span id="room-label">IGOR-2K60</span></span>
-        <h1>Entrar no StreamCord 2K 60FPS</h1>
+        <span class="badge">CONVITE OFICIAL v9.12.0 • SALA <span id="room-label">IGOR-2K60</span></span>
+        <h1 id="invite-heading">Conectando à Sala...</h1>
       </div>
     </div>
-    <p class="sub">Transmissão em até <strong>2K 60FPS (Hardware GPU)</strong> com áudio estéreo do jogo e <strong>Discord 100% silenciado na stream</strong>.</p>
+    <p class="sub" id="invite-status-text">Verificando se você já possui o aplicativo <strong>StreamCord 2K60</strong> instalado no PC...</p>
 
-    <div class="option recommended">
-      <div class="opt-title">💻 Opção 1 (Recomendado para Windows): Instalador de 2 Cliques</div>
-      <p class="opt-desc">
-        Baixe o instalador, dê <strong>2 cliques</strong> e pronto! Ele instala automaticamente no seu perfil (sem pedir senha de administrador), cria o ícone <strong>StreamCord 2K60</strong> na Área de Trabalho e já abre conectado.
+    <div class="option recommended" id="app-launch-box">
+      <div class="opt-title">🚀 Abrindo no Aplicativo ou Navegador</div>
+      <p class="opt-desc" id="launch-desc">
+        Se o seu navegador mostrar um aviso pedindo para abrir o <strong>StreamCord 2K60</strong>, clique em <strong>Abrir</strong> — esta aba será fechada logo em seguida.<br/>
+        Caso não tenha o app instalado, você entrará automaticamente pelo navegador em <strong id="countdown-sec">2</strong>s.
       </p>
-      <a class="btn btn-green" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-Instalador.exe">⬇️ Baixar Instalador Oficial (2 Cliques)</a>
       <div class="row">
-        <a class="btn btn-dark" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-2K60.zip">📦 Baixar em .ZIP</a>
-        <a class="btn btn-dark" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-2K60.exe">⚡ Versão Portátil (.EXE)</a>
+        <a class="btn btn-green" id="btn-open-app" href="#">🖥️ Abrir no App do PC</a>
+        <a class="btn btn-blurple" id="btn-web" href="./?room=IGOR-2K60">🌐 Entrar pelo Navegador</a>
       </div>
-      <div class="steps">💡 <strong>Primeira vez no Windows?</strong> Se aparecer a janela informativa azul da Microsoft, basta clicar em <strong>Mais informações</strong> → <strong>Executar mesmo assim</strong>. Nas próximas vezes, abra pelo ícone na Área de Trabalho sem nenhum aviso!</div>
     </div>
 
     <div class="option">
-      <div class="opt-title">🌐 Opção 2: Entrar Agora Sem Baixar Nada (Web App / Celular / Zero Bloqueio)</div>
+      <div class="opt-title">💻 Ainda não tem o App de PC (2K 60FPS + Áudio sem Discord)?</div>
       <p class="opt-desc">
-        Funciona instantaneamente no Edge, Chrome ou Celular com <strong>zero instalação de executável</strong> (ideal também se o Windows da empresa/fábrica tiver Controle de Aplicativos Inteligentes ativo).
+        O instalador leva 5 segundos, não pede senha de administrador e entrega qualidade máxima via GPU.
       </p>
-      <a class="btn btn-blurple" id="btn-web" href="./?room=IGOR-2K60">🚀 Abrir StreamCord Agora no Navegador</a>
+      <a class="btn btn-dark" href="https://github.com/igorvalente00/streamcord-updater/releases/latest/download/StreamCord-Instalador.exe">⬇️ Baixar Instalador Oficial (2 Cliques)</a>
     </div>
   </div>
 
   <script>
     const params = new URLSearchParams(location.search);
     const room = (params.get('room') || 'IGOR-2K60').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    const webUrl = './?room=' + encodeURIComponent(room);
+    const appDeepLink = 'streamcord://room/' + encodeURIComponent(room);
+
     document.getElementById('room-label').textContent = room;
-    document.getElementById('btn-web').href = './?room=' + encodeURIComponent(room);
+    document.getElementById('btn-web').href = webUrl;
+    document.getElementById('btn-open-app').href = appDeepLink;
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
     }
+
+    let appDetected = false;
+    let fallbackTimer = null;
+    let countdownTimer = null;
+
+    function markAppOpened() {
+      if (appDetected) return;
+      appDetected = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      if (countdownTimer) clearInterval(countdownTimer);
+      document.getElementById('invite-heading').textContent = 'Aplicativo StreamCord Detectado!';
+      document.getElementById('invite-status-text').innerHTML =
+        '✅ Confirme a abertura na janela do navegador para entrar direto na sala <strong>' + room + '</strong> pelo app.';
+      document.getElementById('launch-desc').textContent =
+        'Tentando fechar esta aba automaticamente... Se preferir ficar no navegador, clique em "Entrar pelo Navegador".';
+      setTimeout(() => {
+        try { window.open('', '_self'); window.close(); } catch (_) {}
+      }, 1400);
+    }
+
+    window.addEventListener('blur', markAppOpened);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) markAppOpened();
+    });
+
+    // Dispara o protocolo nativo streamcord:// imediatamente
+    setTimeout(() => {
+      try {
+        window.location.href = appDeepLink;
+      } catch (_) {}
+    }, 80);
+
+    // Se em 1.8s o navegador não abriu modal/app (não instalado), entra direto pelo navegador
+    let secs = 2;
+    countdownTimer = setInterval(() => {
+      secs = Math.max(0, secs - 1);
+      const el = document.getElementById('countdown-sec');
+      if (el) el.textContent = String(secs);
+    }, 900);
+
+    fallbackTimer = setTimeout(() => {
+      if (!appDetected && !document.hidden) {
+        window.location.replace(webUrl);
+      }
+    }, 1900);
   </script>
 </body>
 </html>
