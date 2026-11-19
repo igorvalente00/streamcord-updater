@@ -1,657 +1,648 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#5865f2" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="icon" href="icon.svg" type="image/svg+xml" />
-  <link rel="manifest" href="manifest.json" />
-  <title>StreamCord — Transmissão de Tela 2K 60FPS + Áudio (Discord Silenciado)</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body data-theme="nitro-ultra" data-layout="standard" data-mobile-tab="stage">
-  <!-- Container de Notificações Toast (Estilo Discord) -->
-  <div class="toast-container" id="toast-container"></div>
+<!doctype html>
+<html lang="pt-BR" data-studio-accent="indigo" data-studio-surface="obsidian">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>StreamCord — Transmissão de Tela 2K 60FPS</title>
+    <meta name="theme-color" content="#0c0e13" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" type="image/x-icon" href="./favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./pwa-192x192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-theme="nitro-ultra" data-layout="standard" data-mobile-tab="stage">
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <div class="app-layout" id="app-layout">
-    <!-- 1. Barra de Servidores (Esquerda extrema estilo Discord) -->
-    <nav class="server-rail" aria-label="Barra de Ações Rápidas">
-      <div class="server-icon active" id="btn-rail-home" title="StreamCord — Transmissão 2K 60FPS">
-        <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor">
-          <path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.01.06.02.09.01 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/>
-        </svg>
-      </div>
-      <div class="rail-divider"></div>
-
-      <!-- Botão Quick Switcher (Ctrl+K estilo Discord) -->
-      <button class="server-icon" id="btn-rail-cmd" title="Navegação Rápida Discord (Ctrl+K)">
-        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.2">
-          <circle cx="11" cy="11" r="8"/>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-      </button>
-
-      <!-- Botão QR Code / Acesso Mobile -->
-      <button class="server-icon" id="btn-rail-mobile" title="Abrir no Celular / QR Code Mobile">
-        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.2">
-          <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
-          <line x1="12" y1="18" x2="12.01" y2="18"/>
-        </svg>
-      </button>
-
-      <!-- Botão Sala e Apelido -->
-      <button class="server-icon action-btn" id="btn-invite-modal" title="Configurar Código da Sala e Apelido">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2">
-          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
-          <circle cx="9" cy="7" r="4"/>
-          <line x1="19" y1="8" x2="19" y2="14"/>
-          <line x1="22" y1="11" x2="16" y2="11"/>
-        </svg>
-      </button>
-    </nav>
-
-    <!-- 2. Barra Lateral de Canais de Transmissão -->
-    <aside class="channels-sidebar" id="channels-sidebar">
-      <header class="server-header" id="btn-header-room-code">
-        <div class="server-title">
-          <span>StreamCord</span>
-        </div>
-        <span class="status-dot-online" id="cloud-status-pill" title="Conectado"></span>
-      </header>
-
-      <!-- Botão de Busca Rápida estilo Discord ("Encontre ou comece uma conversa") -->
-      <div class="quick-switcher-bar">
-        <button type="button" class="quick-switcher-btn" id="btn-quick-switcher">
-          <span>🔍 Trocar canal ou tema...</span>
-          <kbd>Ctrl+K</kbd>
-        </button>
-      </div>
-
-      <div class="channels-list" id="channels-container"></div>
-
-      <!-- Painel de Status da Sala Conectada -->
-      <div class="voice-connection-panel" id="voice-status-panel">
-        <div class="voice-status-top">
-          <div class="voice-signal-info">
-            <div class="signal-title">
-              <span class="signal-bars" id="signal-bars"><i></i><i></i><i></i></span>
-              <span class="voice-state-text" id="voice-state-text">Sala de Stream Conectada</span>
+    <!-- ====================================================================
+         1. LOBBY INICIAL (OVERLAY DE ENTRADA — GOOGLE AI STUDIO UI)
+         ==================================================================== -->
+    <div id="room-lobby-overlay" class="lobby-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="lobby-title">
+      <div class="lobby-shell">
+        <div class="lobby-topbar">
+          <div class="brand-lockup">
+            <div class="brand-mark">
+              <img src="./streamcord-icon.png" alt="StreamCord" class="app-brand-icon" />
             </div>
-            <div class="voice-channel-sub" id="voice-current-channel-name">🎮 Gameplay 2K 60FPS</div>
+            <div>
+              <h1 id="lobby-title" class="brand-title">StreamCord</h1>
+              <p class="brand-subtitle">Transmissão de tela 2K 60FPS · Baixa latência P2P</p>
+            </div>
           </div>
-          <div class="voice-quick-actions">
-            <button class="icon-btn" id="btn-toggle-sfx" title="Ativar/Silenciar Sons do Aplicativo (Estilo Discord)">
-              <span id="sfx-icon-label">🔔</span>
-            </button>
-            <button class="icon-btn" id="btn-toggle-stats" title="Estatísticas de Vídeo em Tempo Real">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-              </svg>
-            </button>
-            <button class="icon-btn danger-icon" id="btn-disconnect-call" title="Desconectar da Chamada">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/>
-                <line x1="23" y1="1" x2="1" y2="23"/>
-              </svg>
+
+          <div class="lobby-topbar-actions">
+            <button id="btn-lobby-update" type="button" class="btn btn-secondary btn-sm update-btn hidden" title="Nova atualização disponível!">
+              <span id="lobby-update-label">⬇️ Atualizar</span>
             </button>
           </div>
         </div>
 
-        <div class="voice-panel-buttons">
-          <button class="voice-action-pill" id="btn-share-screen">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-              <line x1="8" y1="21" x2="16" y2="21"/>
-              <line x1="12" y1="17" x2="12" y2="21"/>
-            </svg>
-            <span id="share-btn-text">Transmitir</span>
-          </button>
-          <button class="voice-action-pill" id="btn-stream-settings" title="Escolher Monitor/Jogo, Áudio (Discord Mudo) e Qualidade">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
-            <span>Qualidade</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Barra de Usuário -->
-      <div class="user-profile-bar">
-        <div class="user-info-trigger" id="btn-edit-profile" title="Clique para alterar seu apelido ou sala">
-          <div class="avatar-circle" id="local-avatar">A</div>
-          <div class="user-name-meta">
-            <div class="user-display-name" id="local-username">Amigo</div>
-            <div class="user-sub-status" id="local-quality-tag">Somente Tela + Áudio PC</div>
-          </div>
-        </div>
-        <span class="version-tag" id="sidebar-version-tag">v9.5.2</span>
-      </div>
-    </aside>
-
-    <!-- 3. Palco Central (Stage de Transmissão estilo Discord) -->
-    <main class="stage-area" id="stage-area">
-      <header class="stage-header">
-        <div class="stage-channel-info">
-          <button class="mobile-only-btn icon-btn" id="btn-mobile-channels-drawer" title="Ver Canais">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2">
-              <line x1="3" y1="6" x2="21" y2="6"/>
-              <line x1="3" y1="12" x2="21" y2="12"/>
-              <line x1="3" y1="18" x2="21" y2="18"/>
-            </svg>
-          </button>
-          <svg class="speaker-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-            <line x1="8" y1="21" x2="16" y2="21"/>
-            <line x1="12" y1="17" x2="12" y2="21"/>
-          </svg>
-          <h1 id="stage-title">🎮 Gameplay 2K 60FPS</h1>
-        </div>
-
-        <!-- Pílulas Rápidas de Canais (Visíveis nos layouts horizontais/flutuantes: Modelos 2, 5, 10) -->
-        <div class="header-channel-pills" id="header-channel-pills"></div>
-
-        <div class="stage-header-actions">
-          <button class="header-pill-btn theme-header-btn" id="btn-header-themes" title="Modelos de Interface (Alt+T)">
-            <span>🎨</span>
-            <span class="hide-on-xs" id="header-theme-label">Temas</span>
-          </button>
-          <button class="header-pill-btn update-btn hidden" id="btn-header-update" title="Nova atualização disponível!">
-            <span id="update-btn-label">⬇️ Atualizar</span>
-          </button>
-          <button class="header-pill-btn" id="btn-header-invite" title="Código da Sala e Convite">
-            <span>🔗 <strong id="header-room-label">IGOR-2K60</strong></span>
-          </button>
-          <button class="header-pill-btn" id="btn-favorite-room" title="Favoritar ou desfavoritar esta sala">
-            <span id="favorite-room-icon">☆</span>
-            <span class="hide-on-xs" id="favorite-room-label">Favoritar</span>
-          </button>
-          <button class="header-pill-btn" id="btn-open-lobby" title="Voltar ao Lobby (Criar ou Entrar em outra Sala)">
-            <span>🚪</span>
-            <span class="hide-on-xs">Salas</span>
-          </button>
-          <button class="header-pill-btn" id="btn-header-stats" title="Diagnóstico de Vídeo e WebRTC">
-            <span class="dot-live"></span>
-            <span class="hide-on-xs">Telemetria</span>
-          </button>
-          <button class="header-pill-btn" id="btn-toggle-chat" title="Mostrar/Ocultar Chat">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-            </svg>
-            <span class="hide-on-xs">Chat</span>
-            <span class="unread-badge hidden" id="header-chat-badge">0</span>
-          </button>
-        </div>
-      </header>
-
-      <!-- Barra Técnica de Estúdio / Mixer WASAPI (Exibida nos Modelos 3 Broadcast Studio, 4 Cyberpunk e 9 GameBar) -->
-      <div class="studio-mixer-bar" id="studio-mixer-bar">
-        <div class="studio-card">
-          <span class="studio-card-label">🎛️ MIXER WASAPI PROCESS LOOPBACK</span>
-          <div class="vu-meter-row">
-            <span>🔊 Áudio PC/Jogo (48kHz)</span>
-            <div class="vu-bar"><div class="vu-fill" id="vu-fill-game"></div></div>
-            <span class="vu-db" id="vu-db-game">-4.0 dB</span>
-          </div>
-          <div class="vu-meter-row muted-row">
-            <span>🔇 Discord.exe (Auto-Excluído)</span>
-            <div class="vu-bar"><div class="vu-fill zero"></div></div>
-            <span class="vu-db muted">SILENCIADO</span>
-          </div>
-        </div>
-        <div class="studio-card">
-          <span class="studio-card-label">⚡ PIPELINE DE VÍDEO GPU</span>
-          <div class="studio-metrics-inline">
-            <div><small>Encoder</small><strong id="studio-encoder-val">H.264 NVENC/AMF</strong></div>
-            <div><small>Alvo</small><strong id="studio-target-val">1440p • 60 FPS</strong></div>
-            <div><small>Rede</small><strong class="text-green">P2P STUN/MQTT</strong></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="stage-body" id="stage-body">
-        <div class="active-stage-layout" id="active-stage">
-          <!-- Player Principal / Grade Multi-Stream (1, 2, 3 ou 4+ streams ao mesmo tempo!) -->
-          <div class="spotlight-wrapper hidden" id="spotlight-wrapper">
-            <div class="multi-stream-grid" id="multi-stream-grid" data-streams="1"></div>
-            <!-- Camada de Emojis / Reações Flutuantes Ao Vivo -->
-            <div class="floating-reactions-layer" id="floating-reactions-layer"></div>
-            <!-- Banner de Desbloqueio de Áudio Global -->
-            <button type="button" class="mobile-unmute-banner hidden" id="btn-mobile-unmute">
-              🔊 Clique aqui (ou em qualquer lugar) para ativar o Som das Transmissões
-            </button>
-          </div>
-
-          <!-- Painel de Telemetria em Tempo Real -->
-          <div class="rtc-telemetry-Hud hidden" id="rtc-telemetry-hud">
-            <div class="hud-header">
-              <span>⚡ DIAGNÓSTICO DE TRANSMISSÃO</span>
-              <button id="btn-close-hud">✕</button>
-            </div>
-            <div class="hud-grid">
-              <div class="hud-item">
-                <span class="hud-label">Resolução Ativa</span>
-                <span class="hud-val" id="stat-resolution">--</span>
-              </div>
-              <div class="hud-item">
-                <span class="hud-label">Taxa de Quadros</span>
-                <span class="hud-val highlight-green" id="stat-fps">-- FPS</span>
-              </div>
-              <div class="hud-item">
-                <span class="hud-label">Taxa de Dados</span>
-                <span class="hud-val highlight-blurple" id="stat-bitrate">-- Mbps</span>
-              </div>
-              <div class="hud-item">
-                <span class="hud-label">Encoder Ativo</span>
-                <span class="hud-val" id="stat-codec">WebRTC</span>
-              </div>
-              <div class="hud-item">
-                <span class="hud-label">Áudio da Tela</span>
-                <span class="hud-val highlight-green" id="stat-rtt">Discord Mudo</span>
-              </div>
-              <div class="hud-item">
-                <span class="hud-label">Versão do App</span>
-                <span class="hud-val" id="stat-loss">v9.12.2</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Grid de Participantes na Sala -->
-          <div class="participants-grid" id="participants-grid"></div>
-
-          <!-- Barra de Controles Central Flutuante no Palco + Reações Rápidas Estilo Discord -->
-          <div class="stage-control-dock">
-            <button class="dock-btn primary-share" id="dock-btn-share">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                <line x1="8" y1="21" x2="16" y2="21"/>
-                <line x1="12" y1="17" x2="12" y2="21"/>
-              </svg>
-              <span id="dock-share-label">Compartilhar Tela + Áudio</span>
-            </button>
-            <!-- Reações Rápidas no Palco (Discord Stage) -->
-            <div class="dock-reactions" title="Enviar reação ao vivo na tela!">
-              <button type="button" class="react-btn" data-emoji="🔥">🔥</button>
-              <button type="button" class="react-btn" data-emoji="⚡">⚡</button>
-              <button type="button" class="react-btn" data-emoji="😂">😂</button>
-              <button type="button" class="react-btn" data-emoji="👏">👏</button>
-              <button type="button" class="react-btn" data-emoji="❤️">❤️</button>
-            </div>
-            <button class="dock-btn danger-leave hidden" id="dock-btn-leave" title="Fechar Todas as Streams Abertas">
-              <span id="dock-leave-label">Fechar Stream</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </main>
-
-    <!-- 4. Painel Lateral de Chat da Sala -->
-    <aside class="chat-drawer" id="chat-drawer">
-      <header class="chat-header">
-        <h3>💬 Chat da Transmissão</h3>
-        <button class="icon-btn" id="btn-close-chat">✕</button>
-      </header>
-      <div class="chat-messages" id="chat-messages">
-        <div class="chat-welcome">Modo exclusivo de Compartilhamento de Tela + Áudio do PC (com Discord silenciado na transmissão!).</div>
-      </div>
-      <form class="chat-input-bar" id="chat-form">
-        <input type="text" id="chat-input" placeholder="Enviar mensagem na sala..." autocomplete="off" />
-        <button type="submit">Enviar</button>
-      </form>
-    </aside>
-  </div>
-
-  <!-- 5. BARRA DE NAVEGAÇÃO INFERIOR NATIVA MOBILE (ESTILO DISCORD MOBILE) -->
-  <nav class="mobile-bottom-nav" id="mobile-bottom-nav" aria-label="Navegação Mobile">
-    <button type="button" class="mob-nav-item" data-tab="channels">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-        <line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/>
-        <line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/>
-      </svg>
-      <span>Canais</span>
-    </button>
-    <button type="button" class="mob-nav-item active" data-tab="stage">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-        <line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
-      </svg>
-      <span>Palco</span>
-      <i class="mob-live-dot hidden" id="mob-live-dot"></i>
-    </button>
-    <button type="button" class="mob-nav-item mob-share-cta" id="mob-btn-share">
-      <span class="mob-plus-circle">🔴</span>
-      <span id="mob-share-label">Transmitir</span>
-    </button>
-    <button type="button" class="mob-nav-item" data-tab="chat">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-      </svg>
-      <span>Chat</span>
-      <b class="mob-unread-badge hidden" id="mob-chat-badge">0</b>
-    </button>
-    <button type="button" class="mob-nav-item" id="mob-btn-themes">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="9"/>
-        <path d="M12 3a9 9 0 0 1 0 18"/>
-      </svg>
-      <span>10 Temas</span>
-    </button>
-  </nav>
-
-  <!-- MODAL 1: SELEÇÃO DE TELA / MONITOR / JANELA + ÁUDIO (DROPDOWNS ENXUTOS) -->
-  <div class="modal-backdrop hidden" id="stream-modal">
-    <div class="discord-modal wide-modal">
-      <header class="modal-header">
-        <div>
-          <h2>Compartilhamento de Tela + Áudio</h2>
-          <p id="stream-modal-subtitle">Selecione a tela ou janela que deseja transmitir.</p>
-        </div>
-        <button class="icon-btn" id="btn-close-stream-modal">✕</button>
-      </header>
-
-      <div class="modal-body">
-        <!-- Abas de Fontes Nativas (Monitores vs Aplicativos vs Web/Mobile) -->
-        <div class="source-picker-section" id="native-source-section">
-          <div class="source-tabs-bar">
-            <div class="source-tabs-left">
-              <button type="button" class="source-tab-btn active" id="tab-monitors">🖥️ Telas</button>
-              <button type="button" class="source-tab-btn" id="tab-windows">🪟 Aplicativos e Jogos</button>
-              <button type="button" class="source-tab-btn" id="tab-browser-cam">📱 Web / Câmera</button>
-            </div>
-            <button type="button" class="refresh-sources-btn" id="btn-refresh-sources">🔄 Atualizar</button>
-          </div>
-
-          <div class="sources-grid" id="sources-grid">
-            <div class="sources-loading">Carregando monitores e janelas do Windows...</div>
-          </div>
-        </div>
-
-        <!-- Seleção de Motor de Captura (GPU Zero-Copy vs Legado 1-Clique) + Áudio -->
-        <div class="form-section two-cols">
+        <div class="lobby-nickname-row">
           <div>
-            <label class="section-label" for="capture-engine-select">MOTOR DE CAPTURA DE VÍDEO</label>
-            <select id="capture-engine-select" class="discord-select">
-              <option value="gpu_zerocopy" selected>⚡ GPU Zero-Copy Nativa (Recomendado — Máximo FPS)</option>
-              <option value="legacy_csharp">🪟 Captura Direta C# (1 Clique — Compatibilidade)</option>
-            </select>
+            <label for="lobby-username-input" class="field-label">Seu apelido na transmissão</label>
+            <input id="lobby-username-input" type="text" class="text-input" maxlength="24" placeholder="Ex.: ValenteFPS" autocomplete="off" />
           </div>
-
-          <div>
-            <label class="section-label" for="audio-mode-select">ÁUDIO</label>
-            <select id="audio-mode-select" class="discord-select">
-              <option value="pc_no_discord" selected>🔊 Som do PC (Discord Mudo)</option>
-              <option value="window_only">🎮 Som apenas da janela selecionada</option>
-              <option value="none">🔇 Sem áudio</option>
-            </select>
+          <div class="nickname-preview">
+            <span class="avatar is-self">SC</span>
+            <span>Perfil local · Áudio PC sem Discord</span>
           </div>
         </div>
 
-        <!-- Dropdowns de Resolução e Taxa de Quadros -->
-        <div class="form-section two-cols">
-          <div>
-            <label class="section-label" for="resolution-select">RESOLUÇÃO DA IMAGEM</label>
-            <select id="resolution-select" class="discord-select">
-              <option value="720">720p</option>
-              <option value="900">900p</option>
-              <option value="1080" selected>1080p (Full HD)</option>
-              <option value="1440">1440p (2K)</option>
-              <option value="source">Nativa</option>
-            </select>
-          </div>
-
-          <div>
-            <label class="section-label" for="fps-select">TAXA DE QUADROS</label>
-            <select id="fps-select" class="discord-select">
-              <option value="30">30 FPS</option>
-              <option value="60" selected>60 FPS</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Dropdown de Encoder e Slider de Bitrate -->
-        <div class="form-section two-cols">
-          <div>
-            <label class="section-label" for="preset-select">CODIFICAÇÃO DE VÍDEO</label>
-            <select id="preset-select" class="discord-select">
-              <option value="motion" selected>🚀 Automático (priorizar fluidez)</option>
-              <option value="detail">💎 Nitidez / Texto</option>
-              <option value="av1">⚡ AV1 / Alternativo</option>
-            </select>
-          </div>
-
-          <div>
-            <div class="label-row">
-              <label class="section-label" for="bitrate-slider">LIMITE TOTAL DE VÍDEO</label>
-              <span class="bitrate-readout" id="bitrate-value-label">8.0 Mbps</span>
+        <div class="lobby-grid">
+          <!-- Card: Criar Nova Sala -->
+          <section class="lobby-card" aria-labelledby="create-room-heading">
+            <div class="lobby-card-header">
+              <h2 id="create-room-heading" class="lobby-card-title">Criar Nova Sala</h2>
+              <p class="lobby-card-desc">Gere uma sala privada instantânea com código aleatório e link de convite copiado automaticamente.</p>
             </div>
-            <input type="range" id="bitrate-slider" min="2500" max="25000" step="500" value="8000" />
-          </div>
-        </div>
-      </div>
-
-      <footer class="modal-footer">
-        <button type="button" class="btn-secondary" id="btn-cancel-stream">Cancelar</button>
-        <button type="button" class="btn-go-live" id="btn-confirm-go-live">
-          <span>🔴 Transmitir Ao Vivo</span>
-        </button>
-      </footer>
-    </div>
-  </div>
-
-  <!-- MODAL 2: SELETOR DOS 10 MODELOS DE INTERFACE & TEMAS -->
-  <div class="modal-backdrop hidden" id="theme-modal">
-    <div class="discord-modal wide-modal">
-      <header class="modal-header">
-        <div>
-          <h2>🎨 10 Modelos de Interface & Experiência Discord</h2>
-          <p>Altere instantaneamente o visual e a arquitetura de layout do seu StreamCord. Sua escolha fica salva!</p>
-        </div>
-        <button class="icon-btn" id="btn-close-theme-modal">✕</button>
-      </header>
-      <div class="modal-body">
-        <div class="themes-grid" id="themes-grid"></div>
-      </div>
-      <footer class="modal-footer">
-        <button type="button" class="btn-go-live" id="btn-done-theme-modal">✅ Concluído</button>
-      </footer>
-    </div>
-  </div>
-
-  <!-- MODAL 3: ACESSO MOBILE 100% FUNCIONAL (QR CODE + REDE LOCAL + CLOUD) -->
-  <div class="modal-backdrop hidden" id="mobile-modal">
-    <div class="discord-modal">
-      <header class="modal-header">
-        <div>
-          <h2>📱 StreamCord Mobile (Android & iPhone)</h2>
-          <p>Assista às transmissões 2K 60FPS com áudio, converse no chat ou transmita direto do celular!</p>
-        </div>
-        <button class="icon-btn" id="btn-close-mobile-modal">✕</button>
-      </header>
-      <div class="modal-body">
-        <div class="mobile-qr-box">
-          <div class="qr-svg-wrap" id="mobile-qr-container"></div>
-          <div class="mobile-qr-info">
-            <span class="nitro-tag">CONEXÃO DIRETA NA SALA</span>
-            <h3>Escaneie com a Câmera do Celular</h3>
-            <p>Ou acesse um dos endereços abaixo no navegador do celular (Chrome / Safari). O código da sala <strong id="mobile-modal-room">IGOR-2K60</strong> já vai preenchido!</p>
-          </div>
-        </div>
-
-        <div class="form-section">
-          <label class="section-label">ENDEREÇOS DE ACESSO NO CELULAR (WI-FI / REDE LOCAL)</label>
-          <div class="network-links-box" id="mobile-links-list">
-            <div class="net-link-item">Carregando endereços da rede...</div>
-          </div>
-        </div>
-
-        <div class="info-callout">
-          💡 <strong>Dica Mobile (Instalar como App):</strong> No celular, abra o menu do navegador e toque em <code>Adicionar à Tela de Início</code> para usar o StreamCord em tela cheia igual ao aplicativo nativo do Discord!
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- MODAL 4: COMMAND PALETTE / QUICK SWITCHER (CTRL+K ESTILO DISCORD) -->
-  <div class="modal-backdrop hidden" id="cmd-modal">
-    <div class="discord-modal cmd-palette-modal">
-      <div class="cmd-input-wrap">
-        <input type="text" id="cmd-search-input" class="discord-input" placeholder="Para onde você quer ir? (Canais, 10 Temas, Ações...)" autocomplete="off" />
-      </div>
-      <div class="cmd-results-list" id="cmd-results-list"></div>
-    </div>
-  </div>
-
-  <!-- MODAL 5: CONVITE & SALA ONLINE SEM VPN -->
-  <div class="modal-backdrop hidden" id="invite-modal">
-    <div class="discord-modal">
-      <header class="modal-header">
-        <div>
-          <h2>Configurar Sala e Apelido (Sem VPN)</h2>
-          <p>Qualquer amigo no PC ou Celular com o mesmo Código da Sala assiste à sua transmissão na hora!</p>
-        </div>
-        <button class="icon-btn" id="btn-close-invite-modal">✕</button>
-      </header>
-      <div class="modal-body">
-        <div class="form-section">
-          <label class="section-label">SEU APELIDO E COR DO CARD</label>
-          <div class="invite-row">
-            <input type="text" id="input-profile-name" class="discord-input" placeholder="Digite seu nome..." />
-          </div>
-          <div class="avatar-color-picker" id="avatar-color-picker"></div>
-        </div>
-
-        <div class="form-section">
-          <div class="label-row">
-            <label class="section-label">CÓDIGO DO SERVIDOR (ONLINE SEM VPN)</label>
-            <span class="nitro-tag">CONEXÃO AUTOMÁTICA</span>
-          </div>
-          <div class="invite-row">
-            <input type="text" id="input-room-code" class="discord-input" placeholder="Ex: IGOR-2K60" />
-            <button type="button" class="btn-go-live" id="btn-save-name">Salvar e Conectar</button>
-          </div>
-        </div>
-
-        <div class="form-section">
-          <div class="label-row">
-            <label class="section-label">CONVIDAR AMIGOS (INSTALAÇÃO EM 2 CLIQUES • ZERO COMANDOS)</label>
-            <span class="nitro-tag">INSTALADOR OFICIAL</span>
-          </div>
-          <div class="quick-install-card">
-            <div style="font-size:12.5px;color:#dbdee1;line-height:1.45;margin-bottom:8px;">
-              Envie a <strong>Página de Convite</strong> para seus amigos: eles baixam o <strong>Instalador de 2 Cliques</strong> (cria ícone na Área de Trabalho sem precisar digitar nenhum comando!) ou abrem direto no navegador.
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button type="button" class="btn-go-live" id="btn-copy-invite-page" style="flex:1;font-size:12px;padding:10px 12px;">
-                🔗 Copiar Página de Convite (Recomendado)
-              </button>
-              <button type="button" class="overlay-btn" id="btn-copy-ps-install" style="flex:1;font-size:12px;padding:10px 12px;">
-                ⬇️ Copiar Link do Instalador (.EXE)
-              </button>
-              <button type="button" class="overlay-btn" id="btn-copy-web-direct" style="flex:1;font-size:12px;padding:10px 12px;">
-                🌐 Link Web (Sem Baixar Nada)
+            <div class="lobby-card-form">
+              <div>
+                <label for="lobby-create-name" class="field-label">Nome ou código da sala (opcional)</label>
+                <input id="lobby-create-name" type="text" class="text-input" maxlength="24" placeholder="Deixe vazio para código aleatório" autocomplete="off" />
+              </div>
+              <button id="btn-lobby-create-room" type="button" class="btn btn-primary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 5v14" />
+                  <path d="M5 12h14" />
+                </svg>
+                Criar Nova Sala
               </button>
             </div>
+          </section>
+
+          <!-- Card: Entrar em Sala Existente -->
+          <section class="lobby-card" aria-labelledby="join-room-heading">
+            <div class="lobby-card-header">
+              <h2 id="join-room-heading" class="lobby-card-title">Entrar em Sala Existente</h2>
+              <p class="lobby-card-desc">Cole o código da sala ou o link completo de convite enviado pelo seu amigo.</p>
+            </div>
+            <div class="lobby-card-form">
+              <div>
+                <label for="lobby-join-input" class="field-label">Código ou link da sala</label>
+                <input id="lobby-join-input" type="text" class="text-input mono" maxlength="160" placeholder="STRM-7K9P ou link de convite..." autocomplete="off" />
+              </div>
+              <button id="btn-lobby-join-room" type="button" class="btn btn-secondary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+                  <polyline points="10 17 15 12 10 7" />
+                  <line x1="15" y1="12" x2="3" y2="12" />
+                </svg>
+                Entrar na Sala
+              </button>
+            </div>
+          </section>
+        </div>
+
+        <!-- Lista de Salas Favoritas -->
+        <section class="lobby-favorites" aria-labelledby="favorites-heading">
+          <div class="lobby-favorites-header">
+            <h2 id="favorites-heading" class="lobby-section-title">⭐ Salas Favoritas</h2>
+            <span class="lobby-section-meta mono">1 clique para entrar</span>
           </div>
+          <div id="lobby-favorites-list" class="favorites-list"></div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ====================================================================
+         2. TELA PRINCIPAL (3 COLUNAS — BROADCAST DARK STUDIO)
+         ==================================================================== -->
+    <div id="app-layout" class="app-shell">
+      <!-- COLUNA ESQUERDA: RAIL + CANAIS + PAINEL INFERIOR -->
+      <aside class="left-column" aria-label="Navegação e controles de transmissão">
+        <nav class="icon-rail" aria-label="Atalhos rápidos">
+          <button id="btn-rail-home" type="button" class="rail-brand-btn" title="StreamCord — Abrir Lobby de Salas">
+            <img src="./streamcord-icon.png" alt="StreamCord" class="app-brand-icon" />
+          </button>
+
+          <div class="rail-divider" aria-hidden="true"></div>
+
+          <div class="rail-nav">
+            <button id="btn-rail-cmd" type="button" class="rail-btn" title="Busca Rápida (Ctrl+K)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+            </button>
+
+            <button id="btn-rail-mobile" type="button" class="rail-btn" title="QR Code / Celular">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1" />
+                <rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" />
+                <path d="M14 14h3v3h-3z" />
+                <path d="M20 14v3" />
+                <path d="M14 20h6" />
+              </svg>
+            </button>
+
+            <button id="btn-invite-modal" type="button" class="rail-btn" title="Convidar e Perfil">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="8.5" cy="7" r="4" />
+                <line x1="20" y1="8" x2="20" y2="14" />
+                <line x1="23" y1="11" x2="17" y2="11" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="rail-spacer"></div>
+
+          <div class="rail-nav">
+            <button id="btn-rail-themes" type="button" class="rail-btn" title="Aparência / Temas">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 3a9 9 0 0 0 0 18V3Z" fill="currentColor" stroke="none" />
+              </svg>
+            </button>
+            <button id="btn-stream-settings" type="button" class="rail-btn" title="Configurações da Stream">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z" />
+              </svg>
+            </button>
+          </div>
+        </nav>
+
+        <!-- Sidebar de Canais de Stream + Painel Inferior -->
+        <div class="channels-sidebar" id="channels-sidebar">
+          <div class="sidebar-room-header" id="btn-header-room-code">
+            <div class="sidebar-room-info">
+              <div class="sidebar-room-name">StreamCord <small id="sidebar-version-tag" class="mono" style="opacity:0.55;font-size:10px;">v9.13.0</small></div>
+              <div id="sidebar-room-code" class="sidebar-room-sub mono">IGOR-2K60</div>
+            </div>
+            <span class="status-dot-online" id="cloud-status-pill" title="Status da conexão"></span>
+          </div>
+
+          <div class="channels-scroll">
+            <div>
+              <div class="channel-group-header">
+                <span>Canais de Stream</span>
+                <button type="button" id="btn-quick-switcher" class="btn-icon" style="width:22px;height:22px;" title="Busca Rápida (Ctrl+K)">🔍</button>
+              </div>
+              <div id="channels-container" class="channel-list"></div>
+            </div>
+          </div>
+
+          <!-- Painel Inferior -->
+          <div class="user-studio-panel" id="voice-status-panel">
+            <div class="connection-row">
+              <div class="connection-status">
+                <span class="signal-bars" id="signal-bars" aria-hidden="true"><span></span><span></span><span></span></span>
+                <span id="voice-state-text">Conectado</span>
+              </div>
+              <span id="voice-current-channel-name" class="mono" style="font-size:11px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px;">🎮 Gameplay 2K</span>
+            </div>
+
+            <div class="studio-actions-row">
+              <button id="btn-share-screen" type="button" class="btn btn-primary btn-share-stream">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <path d="M8 21h8" />
+                  <path d="M12 17v4" />
+                </svg>
+                <span id="share-btn-text">Compartilhar Tela</span>
+              </button>
+
+              <button id="btn-toggle-stats" type="button" class="btn btn-secondary btn-telemetry" title="Telemetria em Tempo Real">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="profile-row">
+              <div class="profile-identity" id="btn-edit-profile" style="cursor:pointer;" title="Editar apelido e cor">
+                <span id="local-avatar" class="avatar is-self">SC</span>
+                <div class="profile-text">
+                  <span id="local-username" class="profile-name">Usuário</span>
+                  <span id="local-quality-tag" class="profile-audio-tag">1080p 60FPS</span>
+                </div>
+              </div>
+              <div class="profile-controls">
+                <button id="btn-toggle-sfx" type="button" class="btn-icon" title="Ativar/Silenciar Sons">
+                  <span id="sfx-icon-label">🔔</span>
+                </button>
+                <button id="btn-disconnect-call" type="button" class="btn-icon" title="Desconectar / Parar Stream">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- COLUNA CENTRAL: CABEÇALHO DA SALA + GRADE DE VÍDEO -->
+      <main class="center-column">
+        <header class="room-header">
+          <div class="room-header-left">
+            <div class="room-channel-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="23 7 16 12 23 17 23 7" />
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+              </svg>
+              <span id="stage-title">🎮 Gameplay 2K 60FPS</span>
+            </div>
+
+            <span class="header-divider" aria-hidden="true"></span>
+
+            <button id="btn-header-invite" type="button" class="room-code-btn mono" title="Abrir convite / copiar link">
+              <span id="header-room-label">IGOR-2K60</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+
+            <button id="btn-favorite-room" type="button" class="btn-favorite" title="Favoritar ou desfavoritar esta sala">
+              <span id="favorite-room-icon" aria-hidden="true">☆</span>
+              <span id="favorite-room-label" class="sr-only">Favoritar</span>
+            </button>
+          </div>
+
+          <div class="room-header-right">
+            <button id="btn-header-update" type="button" class="btn btn-secondary btn-sm update-btn hidden" title="Nova atualização disponível!">
+              <span id="update-btn-label">⬇️ Atualizar</span>
+            </button>
+
+            <button id="btn-open-lobby" type="button" class="btn btn-ghost btn-sm" title="Voltar ao Lobby (Criar ou Trocar Sala)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                <polyline points="9 22 9 12 15 12 15 22" />
+              </svg>
+              Salas / Lobby
+            </button>
+
+            <button id="btn-studio-theme-popover" type="button" class="btn btn-ghost btn-sm" title="Calibração do Tema Escuro">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 3a9 9 0 0 0 0 18V3Z" fill="currentColor" stroke="none" />
+              </svg>
+              <span id="header-theme-label">Temas</span>
+            </button>
+
+            <button id="btn-header-stats" type="button" class="btn btn-ghost btn-sm" title="Telemetria WebRTC">
+              Telemetria
+            </button>
+
+            <button id="btn-toggle-chat" type="button" class="btn-icon is-active" title="Mostrar ou recolher chat">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+              <span class="unread-badge hidden" id="header-chat-badge">0</span>
+            </button>
+
+            <!-- Popover Broadcast Dark Studio -->
+            <div id="theme-popover" class="theme-popover" role="dialog" aria-label="Calibração do tema escuro broadcast">
+              <div>
+                <div class="theme-popover-title">Broadcast Dark Studio</div>
+                <p class="theme-popover-note">Tema escuro calibrado para baixa fadiga visual durante transmissões 2K.</p>
+              </div>
+              <div class="theme-option-group">
+                <span class="theme-option-label">Superfície escura</span>
+                <div class="segmented-control">
+                  <button type="button" class="segmented-btn is-active" data-surface="obsidian">Obsidiana</button>
+                  <button type="button" class="segmented-btn" data-surface="graphite">Grafite OBS</button>
+                </div>
+              </div>
+              <div class="theme-option-group">
+                <span class="theme-option-label">Acento de estúdio</span>
+                <div class="accent-swatches">
+                  <button type="button" class="accent-swatch-btn is-active" data-accent="indigo"><span class="swatch-chip is-indigo"></span>Índigo</button>
+                  <button type="button" class="accent-swatch-btn" data-accent="cyan"><span class="swatch-chip is-cyan"></span>Ciano</button>
+                  <button type="button" class="accent-swatch-btn" data-accent="emerald"><span class="swatch-chip is-emerald"></span>Sinal</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <!-- Área do Palco e Grade de Vídeo -->
+        <section class="video-stage" aria-label="Grade de transmissões de vídeo">
+          <div class="active-stage-layout" id="active-stage">
+            <!-- Grade Multi-Stream -->
+            <div class="spotlight-wrapper hidden" id="spotlight-wrapper">
+              <div class="multi-stream-grid" id="multi-stream-grid" data-streams="1"></div>
+              <div class="floating-reactions-layer" id="floating-reactions-layer"></div>
+              <button type="button" class="mobile-unmute-banner hidden" id="btn-mobile-unmute">
+                🔊 Clique aqui para ativar o Som das Transmissões
+              </button>
+            </div>
+
+            <!-- Telemetria WebRTC -->
+            <div class="inline-telemetry is-open hidden" id="rtc-telemetry-hud" style="position:fixed;bottom:20px;right:320px;z-index:8000;width:300px;background:var(--surface-elevated);border:1px solid var(--border-default);border-radius:12px;padding:12px;box-shadow:var(--shadow-modal);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <span class="mono" style="font-size:11px;font-weight:700;color:var(--accent);">⚡ TELEMETRIA WEBRTC</span>
+                <button id="btn-close-hud" type="button" class="btn-icon" style="width:22px;height:22px;">✕</button>
+              </div>
+              <div class="telemetry-line"><span>Resolução:</span><strong id="stat-resolution">--</strong></div>
+              <div class="telemetry-line"><span>FPS:</span><strong id="stat-fps">-- FPS</strong></div>
+              <div class="telemetry-line"><span>Bitrate:</span><strong id="stat-bitrate">-- Mbps</strong></div>
+              <div class="telemetry-line"><span>Codec / Rota:</span><strong id="stat-codec">WebRTC</strong></div>
+              <div class="telemetry-line"><span>Versão:</span><strong id="stat-loss">v9.13.0</strong></div>
+            </div>
+
+            <!-- Participantes / Estado da Sala -->
+            <div class="participants-grid" id="participants-grid"></div>
+          </div>
+        </section>
+
+        <!-- Controles invisíveis de compatibilidade com dock antigo -->
+        <div class="hidden">
+          <button id="dock-btn-share"><span id="dock-share-label">Compartilhar</span></button>
+          <button id="dock-btn-quality"></button>
+          <button id="dock-btn-themes"></button>
+          <button id="dock-btn-leave"><span id="dock-leave-label">Sair</span></button>
+          <button id="btn-header-themes"></button>
+          <span id="active-preset-pill"></span>
+          <div id="header-channel-pills"></div>
+          <span id="mob-chat-badge"></span>
+          <span id="sidebar-theme-name"></span>
+        </div>
+      </main>
+
+      <!-- COLUNA DIREITA: CHAT RECOLHÍVEL -->
+      <aside id="chat-drawer" class="chat-panel" aria-label="Chat da sala">
+        <div class="chat-header">
+          <div>
+            <span class="chat-header-title">Chat da Sala</span>
+          </div>
+          <button id="btn-close-chat" type="button" class="btn-icon" title="Recolher chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="13 17 18 12 13 7" />
+              <polyline points="6 17 11 12 6 7" />
+            </svg>
+          </button>
+        </div>
+        <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
+        <form id="chat-form" class="chat-composer">
+          <label for="chat-input" class="sr-only">Mensagem no chat</label>
+          <input id="chat-input" type="text" class="text-input" placeholder="Enviar mensagem na sala..." maxlength="280" autocomplete="off" />
+          <button type="submit" class="chat-send-btn" title="Enviar mensagem">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
+          </button>
+        </form>
+      </aside>
+    </div>
+
+    <!-- ====================================================================
+         3. MODAL: CONFIGURAÇÕES DA STREAM (COM SELETOR NATIVO MONITOR/JANELA)
+         ==================================================================== -->
+    <div id="stream-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-dialog" style="max-width:620px;">
+        <div class="modal-header">
+          <div>
+            <h2 class="modal-title">Configurações da Stream</h2>
+            <p class="modal-subtitle">Escolha a tela/janela, resolução, FPS, bitrate e áudio sem Discord</p>
+          </div>
+          <button id="btn-close-stream-modal" type="button" class="btn-icon" title="Fechar">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="setting-block">
+            <div class="setting-row-header">
+              <span class="field-label field-label-inline">O que transmitir</span>
+              <button id="btn-refresh-sources" type="button" class="btn btn-ghost btn-sm">🔄 Atualizar Telas</button>
+            </div>
+            <div class="segmented-control">
+              <button id="tab-monitors" type="button" class="segmented-btn is-active">Monitores</button>
+              <button id="tab-windows" type="button" class="segmented-btn">Janelas</button>
+              <button id="tab-browser-cam" type="button" class="segmented-btn">Navegador / Padrão</button>
+            </div>
+            <div id="sources-grid" class="sources-grid"></div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="setting-block">
+              <label for="resolution-select" class="field-label">Resolução</label>
+              <select id="resolution-select" class="discord-select">
+                <option value="720">720p HD (Econômico)</option>
+                <option value="1080" selected>1080p Full HD</option>
+                <option value="1440">1440p 2K QHD</option>
+                <option value="source">Fonte Nativa</option>
+              </select>
+            </div>
+            <div class="setting-block">
+              <label for="fps-select" class="field-label">Taxa de Quadros (FPS)</label>
+              <select id="fps-select" class="discord-select">
+                <option value="30">30 FPS</option>
+                <option value="60" selected>60 FPS Fluido</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="setting-block">
+            <div class="setting-row-header">
+              <label for="bitrate-slider" class="field-label field-label-inline">Bitrate Máximo (P2P)</label>
+              <span id="bitrate-value-label" class="setting-value-readout mono">8.0 Mbps</span>
+            </div>
+            <input id="bitrate-slider" type="range" class="bitrate-slider" min="2000" max="25000" step="1000" value="8000" />
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="setting-block">
+              <label for="audio-mode-select" class="field-label">Modo de Áudio</label>
+              <select id="audio-mode-select" class="discord-select">
+                <option value="pc_no_discord" selected>🔊 Áudio do PC (Discord Silenciado)</option>
+                <option value="pc_all">🔊 Todo Áudio do PC</option>
+                <option value="none">🔇 Sem Áudio (Apenas Vídeo)</option>
+              </select>
+            </div>
+            <div class="setting-block">
+              <label for="preset-select" class="field-label">Codec / Motor</label>
+              <select id="preset-select" class="discord-select">
+                <option value="motion" selected>H.264 Hardware GPU</option>
+                <option value="av1">AV1 (Ultra Econômico)</option>
+                <option value="vp8">VP8 (Compatibilidade)</option>
+              </select>
+            </div>
+          </div>
+
+          <select id="capture-engine-select" class="hidden">
+            <option value="gpu_zerocopy" selected>GPU Zero-Copy</option>
+          </select>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btn-cancel-stream" type="button" class="btn btn-ghost">Cancelar</button>
+          <button id="btn-confirm-go-live" type="button" class="btn btn-primary">🚀 Transmitir Agora</button>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- MODAL 6: GERENCIADOR DE CANAIS E MODERAÇÃO DO SERVIDOR -->
-  <div class="modal-backdrop hidden" id="channel-manager-modal">
-    <div class="discord-modal">
-      <header class="modal-header">
-        <div>
-          <h2>⚙️ Gerenciar Canais e Servidor</h2>
-          <p>Crie, renomeie ou exclua canais da sala e gerencie usuários banidos.</p>
+    <!-- ====================================================================
+         4. MODAL: CONVITE E PERFIL
+         ==================================================================== -->
+    <div id="invite-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div>
+            <h2 class="modal-title">Convidar & Perfil</h2>
+            <p class="modal-subtitle">Compartilhe o link inteligente da sala ou edite seu apelido</p>
+          </div>
+          <button id="btn-close-invite-modal" type="button" class="btn-icon">✕</button>
         </div>
-        <button class="icon-btn" id="btn-close-channel-manager">✕</button>
-      </header>
-      <div class="modal-body">
-        <div class="form-section">
-          <label class="section-label">CRIAR NOVO CANAL</label>
-          <div class="invite-row">
-            <select id="new-channel-emoji" class="discord-select" style="width:76px;flex-shrink:0;">
+
+        <div class="modal-body">
+          <div class="setting-block">
+            <label for="input-profile-name" class="field-label">Seu Apelido</label>
+            <input id="input-profile-name" type="text" class="text-input" maxlength="24" />
+          </div>
+          <div class="setting-block">
+            <label for="input-room-code" class="field-label">Código da Sala Atual</label>
+            <input id="input-room-code" type="text" class="text-input mono" maxlength="24" />
+          </div>
+          <div class="setting-block">
+            <span class="field-label">Cor do Avatar</span>
+            <div id="avatar-color-picker" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+          </div>
+          <div class="setting-block" style="display:flex;flex-direction:column;gap:8px;">
+            <button id="btn-copy-invite-page" type="button" class="btn btn-primary">🔗 Copiar Link de Convite (Abre no App ou Navegador)</button>
+            <button id="btn-copy-web-direct" type="button" class="btn btn-secondary">🌐 Copiar Link Direto Web</button>
+            <button id="btn-copy-ps-install" type="button" class="btn btn-ghost hidden">Copiar Comando</button>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btn-save-name" type="button" class="btn btn-primary">Salvar Alterações</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL QR CODE / MOBILE -->
+    <div id="mobile-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div>
+            <h2 class="modal-title">Conectar via QR Code</h2>
+            <p class="modal-subtitle">Sala <strong id="mobile-modal-room" class="mono">IGOR-2K60</strong></p>
+          </div>
+          <button id="btn-close-mobile-modal" type="button" class="btn-icon">✕</button>
+        </div>
+        <div class="modal-body" style="align-items:center;text-align:center;">
+          <div id="mobile-qr-container" class="qr-frame"></div>
+          <div id="mobile-links-list" style="width:100%;margin-top:12px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL TEMAS (COMPATIBILIDADE) -->
+    <div id="theme-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h2 class="modal-title">Modelos de Interface</h2>
+          <button id="btn-close-theme-modal" type="button" class="btn-icon">✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="themes-grid"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-done-theme-modal" type="button" class="btn btn-primary">Concluir</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL BUSCA RÁPIDA (CTRL+K) -->
+    <div id="cmd-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-dialog">
+        <div class="modal-body">
+          <input id="cmd-search-input" type="text" class="text-input" placeholder="Buscar canal ou comando..." />
+          <div id="cmd-results-list" style="display:flex;flex-direction:column;gap:6px;margin-top:10px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL GERENCIAR CANAIS -->
+    <div id="channel-manager-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h2 class="modal-title">Gerenciar Canais</h2>
+          <button id="btn-close-channel-manager" type="button" class="btn-icon">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex;gap:8px;">
+            <select id="new-channel-emoji" class="discord-select" style="width:70px;">
               <option value="🎮">🎮</option>
               <option value="🎬">🎬</option>
               <option value="💻">💻</option>
-              <option value="🛋️">🛋️</option>
-              <option value="🎵">🎵</option>
               <option value="🔥">🔥</option>
-              <option value="🎙️">🎙️</option>
             </select>
-            <input type="text" id="new-channel-name" class="discord-input" placeholder="Nome do canal (ex: Arena FPS)..." maxlength="36" />
-            <button type="button" class="btn-go-live" id="btn-create-channel">Criar</button>
+            <input id="new-channel-name" type="text" class="text-input" placeholder="Nome do canal..." maxlength="36" />
+            <button id="btn-create-channel" type="button" class="btn btn-primary">Criar</button>
           </div>
-        </div>
-
-        <div class="form-section">
-          <label class="section-label">CANAIS ATUAIS</label>
-          <div class="channel-manager-list" id="channel-manager-list"></div>
-        </div>
-
-        <div class="form-section">
-          <label class="section-label">USUÁRIOS BANIDOS DA SALA</label>
-          <div class="banned-users-list" id="banned-users-list"></div>
+          <div id="channel-manager-list"></div>
+          <div id="banned-users-list"></div>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- LOBBY INICIAL DE SALAS (Criar Sala / Entrar / Favoritas) -->
-  <div class="room-lobby-overlay hidden" id="room-lobby-overlay">
-    <div class="room-lobby-card">
-      <div class="lobby-header">
-        <div class="lobby-brand">
-          <img src="icon.svg" alt="StreamCord" class="lobby-logo" />
-          <div>
-            <h2>StreamCord 2K 60FPS</h2>
-            <p>Escolha criar uma nova sala privada ou entrar em uma existente</p>
-          </div>
-        </div>
-        <div class="lobby-nick-wrap">
-          <label for="lobby-username-input">Seu Apelido</label>
-          <input type="text" id="lobby-username-input" class="discord-input" placeholder="Seu nome na sala..." maxlength="24" />
-        </div>
-        <button type="button" class="header-pill-btn update-btn lobby-update-btn hidden" id="btn-lobby-update" title="Nova atualização disponível!">
-          <span id="lobby-update-label">⬇️ Atualizar</span>
-        </button>
-      </div>
+    <!-- MENU DE CONTEXTO -->
+    <div class="discord-context-menu hidden" id="discord-context-menu"></div>
 
-      <div class="lobby-actions-grid">
-        <div class="lobby-action-box create-box">
-          <div class="lobby-box-title">➕ Criar Nova Sala</div>
-          <p class="lobby-box-desc">Gera um código aleatório exclusivo na hora (ou use um nome personalizado) e já copia o convite.</p>
-          <input type="text" id="lobby-create-name" class="discord-input" placeholder="Opcional: nome (vazio = aleatório)" maxlength="20" />
-          <button type="button" class="btn-go-live lobby-btn-primary" id="btn-lobby-create-room">✨ Criar Nova Sala</button>
-        </div>
+    <!-- Controller leve do Popover Broadcast Dark Studio (Obsidiana/Grafite + Índigo/Ciano/Sinal) -->
+    <script>
+      (() => {
+        const root = document.documentElement;
+        const btnPop = document.getElementById('btn-studio-theme-popover');
+        const pop = document.getElementById('theme-popover');
+        const savedSurf = localStorage.getItem('streamcord_studio_surface') || 'obsidian';
+        const savedAcc = localStorage.getItem('streamcord_studio_accent') || 'indigo';
+        root.setAttribute('data-studio-surface', savedSurf);
+        root.setAttribute('data-studio-accent', savedAcc);
 
-        <div class="lobby-action-box join-box">
-          <div class="lobby-box-title">🔑 Entrar em Sala Existente</div>
-          <p class="lobby-box-desc">Digite o código da sala ou cole o link de convite enviado pelo seu amigo.</p>
-          <input type="text" id="lobby-join-input" class="discord-input" placeholder="Código (ex: STRM-4821) ou Link..." maxlength="160" />
-          <button type="button" class="btn-secondary lobby-btn-join" id="btn-lobby-join-room">🚀 Entrar na Sala</button>
-        </div>
-      </div>
+        function syncPopoverBtns() {
+          const s = root.getAttribute('data-studio-surface');
+          const a = root.getAttribute('data-studio-accent');
+          document.querySelectorAll('[data-surface]').forEach((b) => b.classList.toggle('is-active', b.dataset.surface === s));
+          document.querySelectorAll('[data-accent]').forEach((b) => b.classList.toggle('is-active', b.dataset.accent === a));
+        }
+        syncPopoverBtns();
 
-      <div class="lobby-favorites-section">
-        <div class="lobby-fav-header">
-          <span>⭐ Salas Favoritas</span>
-          <small>Clique em ☆ Favoritar dentro de qualquer sala para salvá-la aqui</small>
-        </div>
-        <div class="lobby-favorites-list" id="lobby-favorites-list"></div>
-      </div>
-    </div>
-  </div>
+        if (btnPop && pop) {
+          btnPop.addEventListener('click', (e) => {
+            e.stopPropagation();
+            pop.classList.toggle('is-open');
+          });
+          document.addEventListener('click', (e) => {
+            if (!pop.contains(e.target) && e.target !== btnPop) pop.classList.remove('is-open');
+          });
+          pop.querySelectorAll('[data-surface]').forEach((b) => {
+            b.addEventListener('click', () => {
+              root.setAttribute('data-studio-surface', b.dataset.surface);
+              localStorage.setItem('streamcord_studio_surface', b.dataset.surface);
+              syncPopoverBtns();
+            });
+          });
+          pop.querySelectorAll('[data-accent]').forEach((b) => {
+            b.addEventListener('click', () => {
+              root.setAttribute('data-studio-accent', b.dataset.accent);
+              localStorage.setItem('streamcord_studio_accent', b.dataset.accent);
+              syncPopoverBtns();
+            });
+          });
+        }
 
-  <!-- MENU DE CONTEXTO NATIVO (BOTÃO DIREITO ESTILO DISCORD) -->
-  <div class="discord-context-menu hidden" id="discord-context-menu"></div>
-
-  <script src="app.js"></script>
-</body>
+        const railHome = document.getElementById('btn-rail-home');
+        const openLobby = document.getElementById('btn-open-lobby');
+        if (railHome && openLobby) {
+          railHome.addEventListener('click', () => openLobby.click());
+        }
+      })();
+    </script>
+    <script src="./app.js"></script>
+  </body>
 </html>

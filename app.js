@@ -1,6 +1,6 @@
 // StreamCord v9.12.0 — Lobby de Salas (Criar/Entrar/Favoritas) + Deep Link streamcord:// + Economia TURN
 (() => {
-  const APP_VERSION = '9.12.2';
+  const APP_VERSION = '9.13.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
