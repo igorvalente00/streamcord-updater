@@ -1,19 +1,20 @@
-// StreamCord v9.10.0 — Mixer INCLUDE Anti-Discord/Eco + Bitrate Adaptativo TURN/P2P + Trava maintain-resolution
+// StreamCord v9.11.0 — Economia Extrema de TURN (P2P-First + IPv6 + Cap por Resolução + Auto-Stop)
 (() => {
-  const APP_VERSION = '9.10.0';
+  const APP_VERSION = '9.11.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
     { urls: 'stun:stun.cloudflare.com:3478' },
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
   ];
 
   const RTC_CONFIG = {
     iceServers: [...FALLBACK_STUN_SERVERS],
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require',
-    iceCandidatePoolSize: 6,
+    iceCandidatePoolSize: 8,
   };
 
   let iceServersFetchedAt = 0;
@@ -187,15 +188,23 @@
           return;
         }
         if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
-          // Prioriza SEMPRE TURN sobre UDP (portas 3478 e 443) antes de qualquer TCP/TLS
-          // para evitar TCP Head-of-Line Blocking que derruba FPS e quadricula vídeo 60FPS!
-          const prioritized = data.iceServers.map((srv) => {
-            if (!srv || !Array.isArray(srv.urls)) return srv;
-            const udpUrls = srv.urls.filter((u) => /^stun:/i.test(u) || /transport=udp/i.test(u));
-            const otherUrls = srv.urls.filter((u) => !udpUrls.includes(u));
-            return { ...srv, urls: [...udpUrls, ...otherUrls] };
-          });
-          RTC_CONFIG.iceServers = [...prioritized, { urls: 'stun:stun.l.google.com:19302' }];
+          // Separa STUN no topo (P2P/IPv6 direto = 0 GB) e TURN UDP antes de TCP/TLS
+          const stunFirst = [...FALLBACK_STUN_SERVERS];
+          const turnServers = [];
+          for (const srv of data.iceServers) {
+            if (!srv) continue;
+            const urls = Array.isArray(srv.urls) ? srv.urls : [srv.urls];
+            const stunUrls = urls.filter((u) => /^stun:/i.test(u));
+            const turnUdp = urls.filter((u) => /^turn/i.test(u) && /transport=udp/i.test(u));
+            const turnOther = urls.filter((u) => /^turn/i.test(u) && !/transport=udp/i.test(u));
+            if (stunUrls.length > 0) {
+              stunFirst.push({ urls: stunUrls });
+            }
+            if (turnUdp.length > 0 || turnOther.length > 0) {
+              turnServers.push({ ...srv, urls: [...turnUdp, ...turnOther] });
+            }
+          }
+          RTC_CONFIG.iceServers = [...stunFirst, ...turnServers];
           if (!data.fallback) {
             iceServersFetchedAt = Date.now();
           }
@@ -209,6 +218,13 @@
     })();
 
     return iceServersPromise;
+  }
+
+  function isRelayCandidate(candidate) {
+    if (!candidate) return false;
+    if (candidate.type === 'relay') return true;
+    const str = candidate.candidate || '';
+    return /\btyp relay\b/i.test(str);
   }
 
   const DEFAULT_CHANNELS = [
@@ -1050,6 +1066,7 @@
     if (entry) {
       state.screenOutPcs.delete(viewerId);
       if (entry.watchdogTimer) clearTimeout(entry.watchdogTimer);
+      if (entry.relayFlushTimer) clearTimeout(entry.relayFlushTimer);
       entry.pc.close();
       rebalanceViewerBitrates();
     }
@@ -2027,13 +2044,13 @@
     );
   }
 
-  // Injeta piso (x-google-min-bitrate), partida rápida 6000kbps (x-google-start-bitrate) e teto (b=AS) no SDP
+  // Injeta piso (x-google-min-bitrate), partida rápida (x-google-start-bitrate) e teto (b=AS) no SDP
   // para impedir que o estimador do WebRTC comece frio e derrube a imagem nos primeiros segundos!
   function tuneVideoBitrateSdp(sdp, maxKbps) {
     if (!sdp || !Number.isFinite(maxKbps)) return sdp;
-    const clampedMax = Math.max(2500, Math.min(25000, Math.round(maxKbps)));
-    const startKbps = Math.min(clampedMax, 6000);
-    const minKbps = Math.min(clampedMax, 2500);
+    const clampedMax = Math.max(1200, Math.min(25000, Math.round(maxKbps)));
+    const startKbps = Math.min(clampedMax, 4000);
+    const minKbps = Math.min(clampedMax, 1500);
     const lines = sdp.split(/\r?\n/);
     const out = [];
     let inVideo = false;
@@ -2084,12 +2101,16 @@
     return out.join('\r\n');
   }
 
-  // Teto adaptativo por rota (estratégia Crystal/GoLive):
-  // • P2P Direto: libera até 25 Mbps (qualidade máxima 2K/1080p60 na fibra local)
-  // • TURN UDP (Cloudflare): limita a 6 Mbps p/ evitar estouro de buffer do relay e manter 60 FPS cravados
-  // • TURN TCP (último recurso): limita a 4 Mbps p/ evitar TCP Head-of-Line Blocking
-  const RELAY_UDP_MAX_BPS = 6_000_000;
-  const RELAY_TCP_MAX_BPS = 4_000_000;
+  // Teto adaptativo econômico por rota e resolução:
+  // • P2P Direto: libera até 25 Mbps (custo 0 GB na Cloudflare!)
+  // • TURN UDP (Cloudflare): 720p -> 2.0 Mbps (~0.9 GB/h), 1080p -> 3.5 Mbps (~1.5 GB/h), 2K+ -> 5.0 Mbps
+  // • TURN TCP (último recurso): reduz mais ~25% para evitar TCP Head-of-Line Blocking
+  function getTurnRelayCapBps(height, protocol) {
+    const isTcp = protocol === 'tcp';
+    if (height <= 720) return isTcp ? 1_600_000 : 2_000_000;
+    if (height <= 1080) return isTcp ? 2_500_000 : 3_500_000;
+    return isTcp ? 3_500_000 : 5_000_000;
+  }
 
   function getViewerEncoding(entry = null) {
     const count = Math.max(1, state.screenOutPcs.size);
@@ -2101,16 +2122,16 @@
       ? Math.min(selectedHeight, sourceHeight >= 360 ? sourceHeight : selectedHeight)
       : (sourceHeight >= 360 ? sourceHeight : 1080);
 
-    const totalBps = Math.min(25000, Math.max(3000, Number(bitrateKbps) || 10000)) * 1000;
-    let perViewerBps = Math.max(2500000, Math.floor(totalBps / count));
+    const totalBps = Math.min(25000, Math.max(2000, Number(bitrateKbps) || 10000)) * 1000;
+    const minFloorBps = entry && entry.isRelayed ? 1_500_000 : 2_500_000;
+    let perViewerBps = Math.max(minFloorBps, Math.floor(totalBps / count));
 
     if (entry && entry.isRelayed) {
-      const relayCap = entry.relayProtocol === 'tcp' ? RELAY_TCP_MAX_BPS : RELAY_UDP_MAX_BPS;
+      const relayCap = getTurnRelayCapBps(height, entry.relayProtocol);
       perViewerBps = Math.min(perViewerBps, relayCap);
     }
 
-    // Mantém resolução nativa (scale = 1.0) enquanto houver >= 2.5 Mbps por espectador,
-    // evitando reconfigurações bruscas do encoder ao entrar um 2º amigo na call!
+    // Mantém resolução nativa (scale = 1.0) enquanto houver >= 2.5 Mbps (ou se já estiver em 720p no TURN)
     let scale = 1;
     if (perViewerBps < 2500000 && height > 720) {
       scale = Math.min(height / 720, Math.sqrt(2500000 / perViewerBps));
@@ -2229,6 +2250,8 @@
       createdAt: Date.now(),
       offerSent: false,
       localIceBuffer: [],
+      relayIceBuffer: [],
+      relayFlushTimer: null,
       remoteDescSet: false,
       pendingCandidates: [],
       watchdogTimer: null,
@@ -2239,6 +2262,33 @@
 
     const isCurrent = () => state.screenOutPcs.get(viewerId) === outEntry;
 
+    const sendOrQueueIce = (cand) => {
+      if (!isCurrent()) return;
+      if (outEntry.offerSent) {
+        publishDirect(viewerId, {
+          type: 'screen-ice',
+          role: 'from-streamer',
+          sessionId,
+          candidate: cand,
+        });
+      } else {
+        outEntry.localIceBuffer.push(cand);
+      }
+    };
+
+    const flushRelayIce = () => {
+      if (!isCurrent()) return;
+      outEntry.relayFlushTimer = null;
+      const st = pc.connectionState || pc.iceConnectionState;
+      if (st === 'connected' || st === 'completed') {
+        outEntry.relayIceBuffer = [];
+        return;
+      }
+      while (outEntry.relayIceBuffer.length > 0) {
+        sendOrQueueIce(outEntry.relayIceBuffer.shift());
+      }
+    };
+
     const onConnectionStateChange = () => {
       if (!isCurrent()) return;
       const connected = pc.connectionState === 'connected' ||
@@ -2247,6 +2297,11 @@
           pc.signalingState === 'closed') {
         closeScreenOutPc(viewerId);
       } else if (connected) {
+        if (outEntry.relayFlushTimer) {
+          clearTimeout(outEntry.relayFlushTimer);
+          outEntry.relayFlushTimer = null;
+          outEntry.relayIceBuffer = [];
+        }
         // Detecta imediatamente se a conexão fechou em P2P ou TURN (UDP/TCP) e aplica o teto ótimo
         setTimeout(() => { if (isCurrent()) void detectOutgoingRoute(outEntry); }, 900);
         setTimeout(() => { if (isCurrent()) void detectOutgoingRoute(outEntry); }, 2500);
@@ -2272,16 +2327,14 @@
 
     pc.onicecandidate = ({ candidate }) => {
       if (!candidate || !isCurrent()) return;
-      if (outEntry.offerSent) {
-        publishDirect(viewerId, {
-          type: 'screen-ice',
-          role: 'from-streamer',
-          sessionId,
-          candidate,
-        });
-      } else {
-        outEntry.localIceBuffer.push(candidate);
+      if (isRelayCandidate(candidate)) {
+        outEntry.relayIceBuffer.push(candidate);
+        if (!outEntry.relayFlushTimer) {
+          outEntry.relayFlushTimer = setTimeout(flushRelayIce, 1000);
+        }
+        return;
       }
+      sendOrQueueIce(candidate);
     };
 
     try {
@@ -2425,6 +2478,7 @@
           <span class="card-streamer-name">${escapeHtml(displayName)}</span>
         </div>
         <div class="stream-specs-badges">
+          <span class="spec-badge card-route-badge" title="Rota da Conexão (P2P = Custo 0 GB)">⚡ P2P</span>
           <span class="spec-badge card-audio-badge">🔊 Áudio PC</span>
           <span class="spec-badge card-res-badge">1080p</span>
           <span class="spec-badge card-fps-badge">-- FPS</span>
@@ -2465,6 +2519,7 @@
       btnShowPreviewEl: card.querySelector('.btn-card-show-preview'),
       btnHidePreviewEl: card.querySelector('.btn-card-hide-preview'),
       streamerNameEl: card.querySelector('.card-streamer-name'),
+      routeBadgeEl: card.querySelector('.card-route-badge'),
       resBadgeEl: card.querySelector('.card-res-badge'),
       fpsBadgeEl: card.querySelector('.card-fps-badge'),
       mbpsBadgeEl: card.querySelector('.card-bitrate-badge'),
@@ -2753,8 +2808,11 @@
       return;
     }
 
-    if (ws.inEntry && ws.inEntry.pc) {
-      try { ws.inEntry.pc.close(); } catch (e) {}
+    if (ws.inEntry) {
+      if (ws.inEntry.relayFlushTimer) clearTimeout(ws.inEntry.relayFlushTimer);
+      if (ws.inEntry.pc) {
+        try { ws.inEntry.pc.close(); } catch (e) {}
+      }
     }
     if (ws.natWarningTimer) {
       clearTimeout(ws.natWarningTimer);
@@ -2776,14 +2834,51 @@
       remoteVideoStream: new MediaStream(),
       answerSent: false,
       localIceBuffer: [],
+      relayIceBuffer: [],
+      relayFlushTimer: null,
       remoteDescSet: false,
       pendingCandidates: [...earlyCandidates],
     };
     ws.inEntry = inEntry;
 
-    const updateIceUi = () => {
-      if (ws.inEntry !== inEntry || !state.watchedStreams.has(streamerId) || ws.webrtcVideoActive) return;
+    const sendOrQueueViewerIce = (cand) => {
+      if (ws.inEntry !== inEntry) return;
+      if (inEntry.answerSent) {
+        publishDirect(streamerId, {
+          type: 'screen-ice',
+          role: 'from-viewer',
+          sessionId,
+          candidate: cand,
+        });
+      } else {
+        inEntry.localIceBuffer.push(cand);
+      }
+    };
+
+    const flushViewerRelayIce = () => {
+      if (ws.inEntry !== inEntry) return;
+      inEntry.relayFlushTimer = null;
       const st = pc.connectionState || pc.iceConnectionState;
+      if (st === 'connected' || st === 'completed') {
+        inEntry.relayIceBuffer = [];
+        return;
+      }
+      while (inEntry.relayIceBuffer.length > 0) {
+        sendOrQueueViewerIce(inEntry.relayIceBuffer.shift());
+      }
+    };
+
+    const updateIceUi = () => {
+      if (ws.inEntry !== inEntry || !state.watchedStreams.has(streamerId)) return;
+      const st = pc.connectionState || pc.iceConnectionState;
+      if (st === 'connected' || st === 'completed') {
+        if (inEntry.relayFlushTimer) {
+          clearTimeout(inEntry.relayFlushTimer);
+          inEntry.relayFlushTimer = null;
+          inEntry.relayIceBuffer = [];
+        }
+      }
+      if (ws.webrtcVideoActive) return;
       if (st === 'checking' || st === 'connecting') {
         setStreamCardStatus(ws, '🌐 Estabelecendo rota direta P2P (STUN)...');
         if (!ws.natWarningTimer) {
@@ -2809,16 +2904,14 @@
 
     pc.onicecandidate = ({ candidate }) => {
       if (!candidate || ws.inEntry !== inEntry) return;
-      if (inEntry.answerSent) {
-        publishDirect(streamerId, {
-          type: 'screen-ice',
-          role: 'from-viewer',
-          sessionId,
-          candidate,
-        });
-      } else {
-        inEntry.localIceBuffer.push(candidate);
+      if (isRelayCandidate(candidate)) {
+        inEntry.relayIceBuffer.push(candidate);
+        if (!inEntry.relayFlushTimer) {
+          inEntry.relayFlushTimer = setTimeout(flushViewerRelayIce, 1000);
+        }
+        return;
       }
+      sendOrQueueViewerIce(candidate);
     };
 
     pc.ontrack = (ev) => {
@@ -3053,7 +3146,8 @@
                   const rc = p.remoteCandidateId ? stats.get(p.remoteCandidateId) : null;
                   const isRelay = (lc && lc.candidateType === 'relay') || (rc && rc.candidateType === 'relay');
                   const proto = (lc && lc.protocol) || (rc && rc.protocol) || 'udp';
-                  const capLabel = isRelay ? (proto.toLowerCase() === 'tcp' ? ' 4M' : ' 6M') : '';
+                  const capMbps = Math.round((getTurnRelayCapBps(r.frameHeight || 1080, proto.toLowerCase()) / 1_000_000) * 10) / 10;
+                  const capLabel = isRelay ? ` ${capMbps}M` : '';
                   routeTag = isRelay ? ` • TURN ${proto.toUpperCase()}${capLabel}` : ` • P2P`;
                 }
               });
@@ -3071,6 +3165,31 @@
         selfWs.resBadgeEl.textContent = outRes;
         selfWs.fpsBadgeEl.textContent = outFps === null ? '— FPS' : `${Math.round(outFps)} FPS`;
         selfWs.mbpsBadgeEl.textContent = outMbps === null ? '— Mbps' : `${outMbps} Mbps`;
+        if (selfWs.routeBadgeEl) {
+          const anyRelay = [...state.screenOutPcs.values()].some((e) => e && e.isRelayed);
+          if (state.screenOutPcs.size === 0) {
+            selfWs.routeBadgeEl.textContent = '⏸️ Aguardando';
+          } else if (anyRelay) {
+            selfWs.routeBadgeEl.textContent = '🟡 TURN (Econ.)';
+          } else {
+            selfWs.routeBadgeEl.textContent = '🟢 P2P (0 GB)';
+          }
+        }
+      }
+
+      // Auto-Stop por inatividade: se ficar 10 minutos transmitindo com 0 espectadores, encerra automaticamente
+      if (state.screenOutPcs.size === 0) {
+        if (!state._zeroViewerSince) state._zeroViewerSince = Date.now();
+        else if (Date.now() - state._zeroViewerSince >= 10 * 60 * 1000) {
+          state._zeroViewerSince = 0;
+          appendMessage({
+            type: 'system',
+            text: '⏸️ Transmissão encerrada automaticamente (10 min sem nenhum espectador ativo).',
+          });
+          stopScreenShare(true);
+        }
+      } else {
+        state._zeroViewerSince = 0;
       }
     }
 
@@ -3090,18 +3209,23 @@
           ws.resBadgeEl.textContent = rRes;
           ws.fpsBadgeEl.textContent = rFps;
           ws.mbpsBadgeEl.textContent = rMbps;
+          let rRoute = '';
+          let isRelayPair = false;
+          let pairProto = 'udp';
+          stats.forEach((p) => {
+            if (p.type === 'candidate-pair' && (p.selected || (p.nominated && p.state === 'succeeded'))) {
+              const lc = p.localCandidateId ? stats.get(p.localCandidateId) : null;
+              const rc = p.remoteCandidateId ? stats.get(p.remoteCandidateId) : null;
+              isRelayPair = Boolean((lc && lc.candidateType === 'relay') || (rc && rc.candidateType === 'relay'));
+              pairProto = ((lc && lc.protocol) || (rc && rc.protocol) || 'udp').toUpperCase();
+              rRoute = isRelayPair ? ` • TURN ${pairProto}` : ` • P2P`;
+            }
+          });
+          if (ws.routeBadgeEl) {
+            ws.routeBadgeEl.textContent = isRelayPair ? `🟡 TURN ${pairProto}` : '🟢 P2P (0 GB)';
+          }
           if (!firstRemoteStats || state.focusedStreamerId === ws.streamerId) {
             const rCodec = stats.get(r.codecId)?.mimeType?.split('/')[1] || 'WebRTC';
-            let rRoute = '';
-            stats.forEach((p) => {
-              if (p.type === 'candidate-pair' && (p.selected || (p.nominated && p.state === 'succeeded'))) {
-                const lc = p.localCandidateId ? stats.get(p.localCandidateId) : null;
-                const rc = p.remoteCandidateId ? stats.get(p.remoteCandidateId) : null;
-                const isRelay = (lc && lc.candidateType === 'relay') || (rc && rc.candidateType === 'relay');
-                const proto = (lc && lc.protocol) || (rc && rc.protocol) || 'udp';
-                rRoute = isRelay ? ` • TURN ${proto.toUpperCase()}` : ` • P2P`;
-              }
-            });
             firstRemoteStats = {
               res: rRes,
               fps: rFps,
