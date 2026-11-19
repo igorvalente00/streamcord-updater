@@ -1,6 +1,6 @@
 // StreamCord v9.12.0 — Lobby de Salas (Criar/Entrar/Favoritas) + Deep Link streamcord:// + Economia TURN
 (() => {
-  const APP_VERSION = '9.12.0';
+  const APP_VERSION = '9.12.1';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -4557,7 +4557,11 @@
     state.roomCode = cleanCode;
     localStorage.setItem('streamcord_room', state.roomCode);
     state.onlineUsers.clear();
-    loadRoomChannels();
+    try {
+      state.channels = JSON.parse(localStorage.getItem('streamcord_channels_' + state.roomCode) || 'null') || DEFAULT_CHANNELS.map((c) => ({ ...c }));
+    } catch (_) {
+      state.channels = DEFAULT_CHANNELS.map((c) => ({ ...c }));
+    }
     saveProfileToServer();
     updateLocalProfileUI();
     updateFavoriteButtonUI();
