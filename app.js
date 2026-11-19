@@ -1,6 +1,6 @@
-// StreamCord v9.9.0 — Áudio Discord Isolado via WASAPI Mixer + SDP Anti-Queda + TURN UDP Prioritário
+// StreamCord v9.10.0 — Mixer INCLUDE Anti-Discord/Eco + Bitrate Adaptativo TURN/P2P + Trava maintain-resolution
 (() => {
-  const APP_VERSION = '9.9.0';
+  const APP_VERSION = '9.10.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -118,6 +118,17 @@
         const isRelay =
           (localCand && localCand.candidateType === 'relay') ||
           (remoteCand && remoteCand.candidateType === 'relay');
+        const proto = ((localCand && localCand.protocol) || (remoteCand && remoteCand.protocol) || 'udp').toLowerCase();
+
+        // Atualiza rota detectada para o controlador adaptativo de bitrate (P2P vs TURN UDP/TCP)
+        if ('isRelayed' in entry) {
+          const changed = entry.isRelayed !== Boolean(isRelay) || entry.relayProtocol !== proto;
+          if (changed) {
+            entry.isRelayed = Boolean(isRelay);
+            entry.relayProtocol = proto;
+            rebalanceViewerBitrates();
+          }
+        }
         if (!isRelay) continue;
 
         const currentRelayBytes = (selectedPair.bytesSent || 0) + (selectedPair.bytesReceived || 0);
@@ -2016,12 +2027,12 @@
     );
   }
 
-  // Injeta piso (x-google-min-bitrate), partida rápida (x-google-start-bitrate) e teto (b=AS) no SDP de vídeo
-  // para impedir que o GCC do WebRTC derrube a imagem para 300-500kbps borrados ao passar pelo TURN/P2P!
+  // Injeta piso (x-google-min-bitrate), partida rápida 6000kbps (x-google-start-bitrate) e teto (b=AS) no SDP
+  // para impedir que o estimador do WebRTC comece frio e derrube a imagem nos primeiros segundos!
   function tuneVideoBitrateSdp(sdp, maxKbps) {
     if (!sdp || !Number.isFinite(maxKbps)) return sdp;
     const clampedMax = Math.max(2500, Math.min(25000, Math.round(maxKbps)));
-    const startKbps = Math.min(clampedMax, 5000);
+    const startKbps = Math.min(clampedMax, 6000);
     const minKbps = Math.min(clampedMax, 2500);
     const lines = sdp.split(/\r?\n/);
     const out = [];
@@ -2073,7 +2084,14 @@
     return out.join('\r\n');
   }
 
-  function getViewerEncoding() {
+  // Teto adaptativo por rota (estratégia Crystal/GoLive):
+  // • P2P Direto: libera até 25 Mbps (qualidade máxima 2K/1080p60 na fibra local)
+  // • TURN UDP (Cloudflare): limita a 6 Mbps p/ evitar estouro de buffer do relay e manter 60 FPS cravados
+  // • TURN TCP (último recurso): limita a 4 Mbps p/ evitar TCP Head-of-Line Blocking
+  const RELAY_UDP_MAX_BPS = 6_000_000;
+  const RELAY_TCP_MAX_BPS = 4_000_000;
+
+  function getViewerEncoding(entry = null) {
     const count = Math.max(1, state.screenOutPcs.size);
     const { bitrateKbps, fps, resolution } = state.streamSettings;
     const videoTrack = state.localScreenStream?.getVideoTracks()[0];
@@ -2084,7 +2102,12 @@
       : (sourceHeight >= 360 ? sourceHeight : 1080);
 
     const totalBps = Math.min(25000, Math.max(3000, Number(bitrateKbps) || 10000)) * 1000;
-    const perViewerBps = Math.max(2500000, Math.floor(totalBps / count));
+    let perViewerBps = Math.max(2500000, Math.floor(totalBps / count));
+
+    if (entry && entry.isRelayed) {
+      const relayCap = entry.relayProtocol === 'tcp' ? RELAY_TCP_MAX_BPS : RELAY_UDP_MAX_BPS;
+      perViewerBps = Math.min(perViewerBps, relayCap);
+    }
 
     // Mantém resolução nativa (scale = 1.0) enquanto houver >= 2.5 Mbps por espectador,
     // evitando reconfigurações bruscas do encoder ao entrar um 2º amigo na call!
@@ -2102,6 +2125,29 @@
     };
   }
 
+  async function detectOutgoingRoute(entry) {
+    if (!entry || !entry.pc || entry.pc.signalingState === 'closed') return;
+    try {
+      const stats = await entry.pc.getStats();
+      let selectedPair = null;
+      stats.forEach((r) => {
+        if (r.type === 'candidate-pair' && (r.selected || (r.nominated && r.state === 'succeeded'))) {
+          selectedPair = r;
+        }
+      });
+      if (!selectedPair) return;
+      const lc = selectedPair.localCandidateId ? stats.get(selectedPair.localCandidateId) : null;
+      const rc = selectedPair.remoteCandidateId ? stats.get(selectedPair.remoteCandidateId) : null;
+      const isRelay = Boolean((lc && lc.candidateType === 'relay') || (rc && rc.candidateType === 'relay'));
+      const proto = ((lc && lc.protocol) || (rc && rc.protocol) || 'udp').toLowerCase();
+      if (entry.isRelayed !== isRelay || entry.relayProtocol !== proto) {
+        entry.isRelayed = isRelay;
+        entry.relayProtocol = proto;
+        rebalanceViewerBitrates();
+      }
+    } catch (_) {}
+  }
+
   async function applyViewerEncoding(entry) {
     if (!entry.videoSender || !entry.offerSent || entry.applyingEncoding) return;
     entry.applyingEncoding = true;
@@ -2111,9 +2157,9 @@
         const params = entry.videoSender.getParameters();
         if (!params.encodings?.length) return;
         Object.assign(params.encodings[0], encoding);
-        // 'disabled' trava resolução nativa E 60 FPS no Chromium (evita downscale p/ 360p ou queda p/ 20fps!).
-        const preferredDeg = state.streamSettings.preset === 'detail' ? 'maintain-resolution' : 'disabled';
-        params.degradationPreference = preferredDeg;
+        // Descoberta Crystal/GoLive: 'maintain-resolution' impede o QP quality-scaler do Chromium
+        // de derrubar 1080p/2K para 360p/540p nos primeiros segundos da stream (bug do BWE frio)!
+        params.degradationPreference = 'maintain-resolution';
         try {
           await entry.videoSender.setParameters(params);
         } catch (degErr) {
@@ -2132,8 +2178,8 @@
   }
 
   function rebalanceViewerBitrates() {
-    const encoding = getViewerEncoding();
     for (const entry of state.screenOutPcs.values()) {
+      const encoding = getViewerEncoding(entry);
       const previous = entry.desiredEncoding;
       if (!previous || Object.keys(encoding).some((key) => encoding[key] !== previous[key])) {
         entry.desiredEncoding = encoding;
@@ -2186,6 +2232,8 @@
       remoteDescSet: false,
       pendingCandidates: [],
       watchdogTimer: null,
+      isRelayed: false,
+      relayProtocol: 'udp',
     };
     state.screenOutPcs.set(viewerId, outEntry);
 
@@ -2198,17 +2246,22 @@
       if (pc.connectionState === 'failed' || pc.iceConnectionState === 'failed' ||
           pc.signalingState === 'closed') {
         closeScreenOutPc(viewerId);
-      } else if (connected && !forceAlt && !outEntry.watchdogTimer) {
-        outEntry.watchdogTimer = setTimeout(async () => {
-          if (!isCurrent() || !state.isStreaming) return;
-          try {
-            const stats = await pc.getStats();
-            const reports = [...stats.values()].filter((r) => r.type === 'outbound-rtp' && r.kind === 'video');
-            if (isCurrent() && reports.length && reports.every((r) => r.framesSent === 0)) {
-              void startScreenOutPcForViewer(viewerId, true, true, requestChannelId);
-            }
-          } catch (e) {}
-        }, 3200);
+      } else if (connected) {
+        // Detecta imediatamente se a conexão fechou em P2P ou TURN (UDP/TCP) e aplica o teto ótimo
+        setTimeout(() => { if (isCurrent()) void detectOutgoingRoute(outEntry); }, 900);
+        setTimeout(() => { if (isCurrent()) void detectOutgoingRoute(outEntry); }, 2500);
+        if (!forceAlt && !outEntry.watchdogTimer) {
+          outEntry.watchdogTimer = setTimeout(async () => {
+            if (!isCurrent() || !state.isStreaming) return;
+            try {
+              const stats = await pc.getStats();
+              const reports = [...stats.values()].filter((r) => r.type === 'outbound-rtp' && r.kind === 'video');
+              if (isCurrent() && reports.length && reports.every((r) => r.framesSent === 0)) {
+                void startScreenOutPcForViewer(viewerId, true, true, requestChannelId);
+              }
+            } catch (e) {}
+          }, 3200);
+        }
       }
     };
     pc.onconnectionstatechange = onConnectionStateChange;
@@ -3000,7 +3053,8 @@
                   const rc = p.remoteCandidateId ? stats.get(p.remoteCandidateId) : null;
                   const isRelay = (lc && lc.candidateType === 'relay') || (rc && rc.candidateType === 'relay');
                   const proto = (lc && lc.protocol) || (rc && rc.protocol) || 'udp';
-                  routeTag = isRelay ? ` • TURN ${proto.toUpperCase()}` : ` • P2P`;
+                  const capLabel = isRelay ? (proto.toLowerCase() === 'tcp' ? ' 4M' : ' 6M') : '';
+                  routeTag = isRelay ? ` • TURN ${proto.toUpperCase()}${capLabel}` : ` • P2P`;
                 }
               });
               const qlr = r.qualityLimitationReason && r.qualityLimitationReason !== 'none'
