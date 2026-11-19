@@ -161,8 +161,8 @@
             <span>🎨</span>
             <span class="hide-on-xs" id="header-theme-label">Temas</span>
           </button>
-          <button class="header-pill-btn update-btn" id="btn-header-update" title="Verificar ou instalar atualizações">
-            <span id="update-btn-label">🔄 Atualizar</span>
+          <button class="header-pill-btn update-btn hidden" id="btn-header-update" title="Nova atualização disponível!">
+            <span id="update-btn-label">⬇️ Atualizar</span>
           </button>
           <button class="header-pill-btn" id="btn-header-invite" title="Código da Sala e Convite">
             <span>🔗 <strong id="header-room-label">IGOR-2K60</strong></span>
@@ -256,7 +256,7 @@
               </div>
               <div class="hud-item">
                 <span class="hud-label">Versão do App</span>
-                <span class="hud-val" id="stat-loss">v9.12.1</span>
+                <span class="hud-val" id="stat-loss">v9.12.2</span>
               </div>
             </div>
           </div>
@@ -618,6 +618,9 @@
           <label for="lobby-username-input">Seu Apelido</label>
           <input type="text" id="lobby-username-input" class="discord-input" placeholder="Seu nome na sala..." maxlength="24" />
         </div>
+        <button type="button" class="header-pill-btn update-btn lobby-update-btn hidden" id="btn-lobby-update" title="Nova atualização disponível!">
+          <span id="lobby-update-label">⬇️ Atualizar</span>
+        </button>
       </div>
 
       <div class="lobby-actions-grid">

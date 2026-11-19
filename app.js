@@ -1,6 +1,6 @@
 // StreamCord v9.12.0 — Lobby de Salas (Criar/Entrar/Favoritas) + Deep Link streamcord:// + Economia TURN
 (() => {
-  const APP_VERSION = '9.12.1';
+  const APP_VERSION = '9.12.2';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -685,6 +685,8 @@
 
     btnHeaderUpdate: document.getElementById('btn-header-update'),
     updateBtnLabel: document.getElementById('update-btn-label'),
+    btnLobbyUpdate: document.getElementById('btn-lobby-update'),
+    lobbyUpdateLabel: document.getElementById('lobby-update-label'),
     btnRailUpdate: document.getElementById('btn-rail-update'),
 
     rtcTelemetryHud: document.getElementById('rtc-telemetry-hud'),
@@ -884,13 +886,29 @@
   }
 
   // =========================================================================
-  // 4. AUTO-UPDATER ESTILO DISCORD
+  // 4. AUTO-UPDATER ESTILO DISCORD (Visível somente se houver atualização)
   // =========================================================================
+  function syncUpdateButtonsUI(labelText = null, isDisabled = false) {
+    const show = Boolean(state.updateAvailable);
+    const buttons = [els.btnHeaderUpdate, els.btnLobbyUpdate];
+    const labels = [els.updateBtnLabel, els.lobbyUpdateLabel];
+    for (const btn of buttons) {
+      if (!btn) continue;
+      btn.classList.toggle('hidden', !show);
+      btn.classList.toggle('update-ready', show);
+      btn.disabled = Boolean(isDisabled);
+    }
+    if (labelText !== null) {
+      for (const lbl of labels) {
+        if (lbl) lbl.textContent = labelText;
+      }
+    }
+  }
+
   async function checkAppUpdate(manualClick = false) {
-    const prevLabel = els.updateBtnLabel ? els.updateBtnLabel.textContent : '🔄 Atualizar';
-    if (manualClick && els.btnHeaderUpdate) {
-      els.btnHeaderUpdate.disabled = true;
-      if (els.updateBtnLabel) els.updateBtnLabel.textContent = '🔍 Verificando...';
+    const prevLabel = els.updateBtnLabel ? els.updateBtnLabel.textContent : '⬇️ Atualizar';
+    if (manualClick) {
+      syncUpdateButtonsUI('🔍 Verificando...', true);
     }
     try {
       if (!IS_LOCAL_HOST) {
@@ -901,15 +919,17 @@
           if (latest !== APP_VERSION) {
             state.updateAvailable = true;
             state.latestVersion = latest;
-            els.btnHeaderUpdate.classList.add('update-ready');
-            els.updateBtnLabel.textContent = `⬇️ Recarregar v${latest}`;
+            syncUpdateButtonsUI(`⬇️ Recarregar v${latest}`, false);
             if (manualClick) {
               window.location.reload();
               return;
             }
-          } else if (manualClick) {
-            if (els.updateBtnLabel) els.updateBtnLabel.textContent = '🔄 Atualizar';
-            showToast(`Versão Web/Mobile já está atualizada (v${APP_VERSION})!`, '✅');
+          } else {
+            state.updateAvailable = false;
+            syncUpdateButtonsUI('⬇️ Atualizar', false);
+            if (manualClick) {
+              showToast(`Versão Web/Mobile já está atualizada (v${APP_VERSION})!`, '✅');
+            }
           }
         }
         return;
@@ -920,24 +940,26 @@
       if (data && data.updateAvailable) {
         state.updateAvailable = true;
         state.latestVersion = data.latestVersion;
-        els.btnHeaderUpdate.classList.add('update-ready');
-        els.updateBtnLabel.textContent = `⬇️ Atualizar v${data.latestVersion}`;
+        syncUpdateButtonsUI(`⬇️ Atualizar v${data.latestVersion}`, false);
         if (manualClick) {
           await triggerInPlaceUpdate();
           return;
         }
-      } else if (manualClick) {
-        if (els.updateBtnLabel) els.updateBtnLabel.textContent = '🔄 Atualizar';
-        showToast(`StreamCord já está na versão mais recente (v${APP_VERSION})!`, '✅');
+      } else {
+        state.updateAvailable = false;
+        syncUpdateButtonsUI('⬇️ Atualizar', false);
+        if (manualClick) {
+          showToast(`StreamCord já está na versão mais recente (v${APP_VERSION})!`, '✅');
+        }
       }
     } catch (e) {
       if (manualClick) {
-        if (els.updateBtnLabel) els.updateBtnLabel.textContent = prevLabel;
+        syncUpdateButtonsUI(prevLabel, false);
         showToast(`Versão Web/Mobile v${APP_VERSION} ativa!`, '✅');
       }
     } finally {
-      if (manualClick && els.btnHeaderUpdate && !state.isApplyingUpdate) {
-        els.btnHeaderUpdate.disabled = false;
+      if (manualClick && !state.isApplyingUpdate) {
+        syncUpdateButtonsUI(null, false);
       }
     }
   }
@@ -948,35 +970,35 @@
       return;
     }
     state.isApplyingUpdate = true;
-    els.updateBtnLabel.textContent = '⏳ Baixando...';
-    els.btnHeaderUpdate.disabled = true;
+    syncUpdateButtonsUI('⏳ Baixando...', true);
     try {
       const res = await fetch('/api/apply-update', { method: 'POST', cache: 'no-store' });
       const data = await res.json();
       if (data && data.ok) {
-        els.updateBtnLabel.textContent = '🚀 Reiniciando...';
+        syncUpdateButtonsUI('🚀 Reiniciando...', true);
         showToast('Atualização baixada! Reiniciando StreamCord...', '🚀');
       } else {
         state.isApplyingUpdate = false;
-        els.updateBtnLabel.textContent = state.updateAvailable ? `⬇️ Atualizar v${state.latestVersion}` : '🔄 Atualizar';
-        els.btnHeaderUpdate.disabled = false;
+        syncUpdateButtonsUI(state.updateAvailable ? `⬇️ Atualizar v${state.latestVersion}` : '⬇️ Atualizar', false);
         showToast(`Erro ao atualizar: ${(data && data.error) || 'Tente novamente'}`, '❌');
       }
     } catch (e) {
       state.isApplyingUpdate = false;
-      els.updateBtnLabel.textContent = state.updateAvailable ? `⬇️ Atualizar v${state.latestVersion}` : '🔄 Atualizar';
-      els.btnHeaderUpdate.disabled = false;
+      syncUpdateButtonsUI(state.updateAvailable ? `⬇️ Atualizar v${state.latestVersion}` : '⬇️ Atualizar', false);
       showToast('Não foi possível concluir a atualização agora.', '❌');
     }
   }
 
-  els.btnHeaderUpdate.onclick = () => {
+  const handleUpdateBtnClick = () => {
     if (state.updateAvailable) triggerInPlaceUpdate();
     else checkAppUpdate(true);
   };
-  if (els.btnRailUpdate) els.btnRailUpdate.onclick = () => els.btnHeaderUpdate.click();
+  if (els.btnHeaderUpdate) els.btnHeaderUpdate.onclick = handleUpdateBtnClick;
+  if (els.btnLobbyUpdate) els.btnLobbyUpdate.onclick = handleUpdateBtnClick;
+  if (els.btnRailUpdate) els.btnRailUpdate.onclick = handleUpdateBtnClick;
 
-  setTimeout(() => checkAppUpdate(false), 1500);
+  syncUpdateButtonsUI('⬇️ Atualizar', false);
+  setTimeout(() => checkAppUpdate(false), 500);
   setInterval(() => checkAppUpdate(false), 45000);
 
   // =========================================================================
