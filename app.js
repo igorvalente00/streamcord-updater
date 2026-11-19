@@ -1,6 +1,6 @@
-// StreamCord v9.12.0 — Lobby de Salas (Criar/Entrar/Favoritas) + Deep Link streamcord:// + Economia TURN
+// StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.13.0';
+  const APP_VERSION = '9.14.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -228,10 +228,10 @@
   }
 
   const DEFAULT_CHANNELS = [
-    { id: 'gameplay-2k', name: '🎮 Gameplay 2K 60FPS', bitrate: '25 Mbps', defaultRes: '1440', defaultFps: 60, defaultKbps: 20000 },
-    { id: 'cinema-watch', name: '🎬 Sessão Cinema & Séries', bitrate: '20 Mbps', defaultRes: '1080', defaultFps: 60, defaultKbps: 16000 },
-    { id: 'dev-code', name: '💻 Código & Nitidez Ultra', bitrate: '15 Mbps', defaultRes: '1440', defaultFps: 60, defaultKbps: 15000 },
-    { id: 'lounge-geral', name: '🛋️ Resenha dos Amigos', bitrate: '12 Mbps', defaultRes: '1080', defaultFps: 60, defaultKbps: 10000 },
+    { id: 'gameplay-2k', name: 'Arena 2K', bitrate: '25 Mbps', defaultRes: '1440', defaultFps: 60, defaultKbps: 20000 },
+    { id: 'cinema-watch', name: 'Squad FPS', bitrate: '20 Mbps', defaultRes: '1080', defaultFps: 60, defaultKbps: 16000 },
+    { id: 'dev-code', name: 'Co-op & Chill', bitrate: '15 Mbps', defaultRes: '1440', defaultFps: 60, defaultKbps: 15000 },
+    { id: 'lounge-geral', name: 'Análise de Replay', bitrate: '12 Mbps', defaultRes: '1080', defaultFps: 60, defaultKbps: 10000 },
   ];
 
   const THEME_MODELS = [
@@ -1828,7 +1828,7 @@
   }
 
   async function startNativeScreenShare() {
-    await ensureTurnQuotaChecked();
+    void ensureTurnQuotaChecked();
     if (turnQuotaState.locked) {
       triggerTurnQuotaLockScreen(turnQuotaState);
       return;
@@ -2467,12 +2467,15 @@
     const u = state.onlineUsers.get(streamerId);
     const displayName = isMe ? `${state.username} (Sua Transmissão)` : `Transmissão de ${u ? u.username : 'Amigo'}`;
 
-    const card = document.createElement('div');
-    card.className = 'video-viewport touch-active';
+    const SVG_VOL_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>';
+    const SVG_VOL_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>';
+
+    const card = document.createElement('article');
+    card.className = 'stream-card video-viewport touch-active';
     card.dataset.streamerId = streamerId;
 
     card.innerHTML = `
-      <div class="video-zoom-container">
+      <div class="video-zoom-container stream-media-wrap">
         <video autoplay muted playsinline></video>
         <audio autoplay></audio>
       </div>
@@ -2480,50 +2483,67 @@
       <div class="viewer-status-overlay hidden">
         <div class="viewer-status-box">
           <div class="viewer-status-spinner"></div>
-          <p class="viewer-status-text">⏳ Conectando à transmissão...</p>
-          <button type="button" class="overlay-btn btn-card-retry">🔄 Tentar Reconectar</button>
+          <p class="viewer-status-text">Conectando à transmissão...</p>
+          <button type="button" class="overlay-ctrl-btn btn-card-retry">Reconectar</button>
         </div>
       </div>
 
       <div class="self-preview-saver hidden">
         <div class="saver-box">
-          <div class="saver-badge">⚡ MODO ALTA PERFORMANCE ATIVO (60 FPS)</div>
-          <h3>Você está transmitindo sua tela com áudio (Discord Silenciado)</h3>
-          <p>Para não consumir sua Placa de Vídeo nem derrubar o FPS do seu jogo, a prévia da sua própria tela fica oculta por padrão (exatamente como no Discord).</p>
-          <button type="button" class="btn-go-live btn-card-show-preview">👁️ Mostrar Minha Prévia Mesmo Assim</button>
+          <div class="saver-badge">MODO ALTA PERFORMANCE ATIVO (60 FPS)</div>
+          <h3>Você está transmitindo sua tela com áudio</h3>
+          <p>Para não consumir sua GPU nem derrubar o FPS do seu jogo, a prévia da sua própria tela fica oculta por padrão.</p>
+          <button type="button" class="btn btn-primary btn-card-show-preview">Mostrar Minha Prévia</button>
         </div>
       </div>
 
       <div class="stream-overlay-top">
-        <div class="streamer-tag">
-          <span class="live-badge">AO VIVO</span>
-          <span class="card-streamer-name">${escapeHtml(displayName)}</span>
+        <div class="stream-owner">
+          <span class="stream-owner-name card-streamer-name">${escapeHtml(displayName)}</span>
+          <span class="stream-res-text mono card-res-badge">1080p</span>
         </div>
-        <div class="stream-specs-badges">
-          <span class="spec-badge card-route-badge" title="Rota da Conexão (P2P = Custo 0 GB)">⚡ P2P</span>
-          <span class="spec-badge card-audio-badge">🔊 Áudio PC</span>
-          <span class="spec-badge card-res-badge">1080p</span>
-          <span class="spec-badge card-fps-badge">-- FPS</span>
-          <span class="spec-badge card-bitrate-badge">-- Mbps</span>
+        <div class="stream-telemetry-strip">
+          <span class="badge-live">AO VIVO</span>
+          <span class="badge-transport mono card-route-badge" title="Rota da Conexão">P2P</span>
+          <span class="stream-metrics-text mono">
+            <span class="card-fps-badge">-- FPS</span>
+            <span>·</span>
+            <span class="card-bitrate-badge">-- Mbps</span>
+          </span>
         </div>
       </div>
 
       <div class="stream-overlay-bottom">
-        <div class="stream-volume-group">
-          <button type="button" class="icon-btn-mini btn-card-mute" title="Mutar/Desmutar Reprodução">${isMe ? '🔇' : '🔊'}</button>
-          <input type="range" class="card-volume-slider" min="0" max="100" value="100" title="Volume desta Transmissão" />
-          <span class="card-volume-label">100%</span>
+        <div class="stream-controls-left">
+          <div class="volume-group stream-volume-group">
+            <button type="button" class="overlay-ctrl-btn is-icon-only btn-card-mute" title="Silenciar ou ativar áudio">${isMe ? SVG_VOL_OFF : SVG_VOL_ON}</button>
+            <input type="range" class="volume-slider card-volume-slider" min="0" max="100" value="100" title="Volume desta Transmissão" />
+            <span class="volume-value mono card-volume-label">100%</span>
+          </div>
         </div>
 
-        <div class="stream-view-controls">
-          <button type="button" class="overlay-btn btn-card-hide-preview hidden">🙈 Ocultar Prévia</button>
-          <button type="button" class="overlay-btn btn-card-focus hidden" title="Expandir / Voltar à Grade">⛶ Focar</button>
-          <button type="button" class="overlay-btn btn-card-zoom" title="Zoom (100% / 150% / 200%)">🔍 100%</button>
-          <button type="button" class="overlay-btn btn-card-pip" title="Picture-in-Picture">📺 PiP</button>
-          <button type="button" class="overlay-btn btn-card-reconnect" title="Reconectar Stream">🔄</button>
-          <button type="button" class="overlay-btn btn-card-fit">Ajustar</button>
-          <button type="button" class="overlay-btn btn-card-full">Tela Cheia</button>
-          <button type="button" class="overlay-btn close-stream-btn btn-card-close" title="Fechar esta stream">✕</button>
+        <div class="stream-controls-right">
+          <button type="button" class="overlay-ctrl-btn btn-card-hide-preview hidden">Ocultar Prévia</button>
+          <button type="button" class="overlay-ctrl-btn btn-card-focus hidden" title="Expandir / Voltar à Grade">Focar</button>
+          <button type="button" class="overlay-ctrl-btn btn-card-zoom" title="Alternar zoom da tela">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>
+            <span class="zoom-text">Zoom</span>
+          </button>
+          <button type="button" class="overlay-ctrl-btn btn-card-pip" title="Picture-in-Picture">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><rect x="12" y="9" width="8" height="6" rx="1" fill="currentColor"></rect></svg>
+            PiP
+          </button>
+          <button type="button" class="overlay-ctrl-btn is-icon-only btn-card-reconnect" title="Reconectar Stream">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>
+          </button>
+          <button type="button" class="overlay-ctrl-btn btn-card-fit" title="Ajustar / Preencher">Ajustar</button>
+          <button type="button" class="overlay-ctrl-btn btn-card-full" title="Tela cheia">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+            Tela Cheia
+          </button>
+          <button type="button" class="overlay-ctrl-btn is-icon-only btn-card-close" title="Fechar esta stream">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
         </div>
       </div>
     `;
@@ -2594,7 +2614,9 @@
     ws.zoomBtnEl.onclick = () => {
       ws.zoomLevel = ws.zoomLevel === 1 ? 1.5 : ws.zoomLevel === 1.5 ? 2 : 1;
       ws.zoomContainerEl.style.transform = `scale(${ws.zoomLevel})`;
-      ws.zoomBtnEl.textContent = `🔍 ${Math.round(ws.zoomLevel * 100)}%`;
+      ws.zoomBtnEl.classList.toggle('is-active', ws.zoomLevel > 1);
+      const zTxt = ws.zoomBtnEl.querySelector('.zoom-text');
+      if (zTxt) zTxt.textContent = ws.zoomLevel > 1 ? `Zoom ${ws.zoomLevel}x` : 'Zoom';
     };
     card.querySelector('.btn-card-fit').onclick = () => ws.videoEl.classList.toggle('fit-cover');
     card.querySelector('.btn-card-full').onclick = () => {
@@ -2627,7 +2649,7 @@
           updateGlobalUnmuteBanner();
         }
       }
-      ws.muteBtnEl.textContent = ws.muted ? '🔇' : '🔊';
+      ws.muteBtnEl.innerHTML = ws.muted ? SVG_VOL_OFF : SVG_VOL_ON;
       ws.volumeLabelEl.textContent = `${v}%`;
     };
 
@@ -2641,7 +2663,7 @@
           updateGlobalUnmuteBanner();
         }
       }
-      ws.muteBtnEl.textContent = ws.muted ? '🔇' : '🔊';
+      ws.muteBtnEl.innerHTML = ws.muted ? SVG_VOL_OFF : SVG_VOL_ON;
     };
 
     ws.btnShowPreviewEl.onclick = () => {
@@ -3189,12 +3211,13 @@
         selfWs.mbpsBadgeEl.textContent = outMbps === null ? '— Mbps' : `${outMbps} Mbps`;
         if (selfWs.routeBadgeEl) {
           const anyRelay = [...state.screenOutPcs.values()].some((e) => e && e.isRelayed);
+          selfWs.routeBadgeEl.classList.toggle('is-turn', anyRelay);
           if (state.screenOutPcs.size === 0) {
-            selfWs.routeBadgeEl.textContent = '⏸️ Aguardando';
+            selfWs.routeBadgeEl.textContent = 'P2P';
           } else if (anyRelay) {
-            selfWs.routeBadgeEl.textContent = '🟡 TURN (Econ.)';
+            selfWs.routeBadgeEl.textContent = 'TURN';
           } else {
-            selfWs.routeBadgeEl.textContent = '🟢 P2P (0 GB)';
+            selfWs.routeBadgeEl.textContent = 'P2P';
           }
         }
       }
@@ -3244,8 +3267,14 @@
             }
           });
           if (ws.routeBadgeEl) {
-            ws.routeBadgeEl.textContent = isRelayPair ? `🟡 TURN ${pairProto}` : '🟢 P2P (0 GB)';
+            ws.routeBadgeEl.classList.toggle('is-turn', isRelayPair);
+            ws.routeBadgeEl.textContent = isRelayPair ? `TURN` : 'P2P';
           }
+          const connSt = document.getElementById('connection-status');
+          const voiceTxt = document.getElementById('voice-state-text');
+          if (connSt) connSt.classList.toggle('is-turn', isRelayPair);
+          if (voiceTxt) voiceTxt.textContent = isRelayPair ? 'Relay · TURN' : 'Conectado · P2P';
+          if (els.cloudStatusPill) els.cloudStatusPill.textContent = isRelayPair ? 'TURN' : 'P2P';
           if (!firstRemoteStats || state.focusedStreamerId === ws.streamerId) {
             const rCodec = stats.get(r.codecId)?.mimeType?.split('/')[1] || 'WebRTC';
             firstRemoteStats = {
@@ -3330,6 +3359,13 @@
     return parts.join('|');
   }
 
+  function getUserInitials(name) {
+    const clean = (name || 'SC').trim();
+    const parts = clean.split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return clean.slice(0, 2).toUpperCase();
+  }
+
   function renderChannelsSidebar() {
     state.onlineUsers.set(state.clientId, getMyStateObject());
     if (document.hidden && state.isStreaming) return;
@@ -3337,20 +3373,9 @@
     if (sig === lastSidebarSig) return;
     lastSidebarSig = sig;
 
-    els.channelsContainer.innerHTML = `
-      <div class="category-header-row">
-        <div class="category-label">SALAS DE TRANSMISSÃO</div>
-        <div class="category-actions">
-          <button type="button" class="category-mini-btn" id="btn-cat-add-channel" title="Criar Novo Canal">+</button>
-          <button type="button" class="category-mini-btn" id="btn-cat-manage-channels" title="Gerenciar Canais e Servidor">⚙️</button>
-        </div>
-      </div>
-    `;
-
-    const btnCatAdd = document.getElementById('btn-cat-add-channel');
-    const btnCatMgr = document.getElementById('btn-cat-manage-channels');
-    if (btnCatAdd) btnCatAdd.onclick = () => openChannelManager(true);
-    if (btnCatMgr) btnCatMgr.onclick = () => openChannelManager(false);
+    els.channelsContainer.innerHTML = '';
+    const chCountEl = document.getElementById('channel-count');
+    if (chCountEl) chCountEl.textContent = String(state.channels.length);
 
     if (els.headerChannelPills) {
       els.headerChannelPills.innerHTML = '';
@@ -3358,58 +3383,61 @@
 
     for (const ch of state.channels) {
       const usersInCh = getUsersInChannel(ch.id);
+      const hasLiveInCh = usersInCh.some((u) => u.streaming);
       const isCurrent = state.currentChannelId === ch.id;
 
-      if (els.headerChannelPills) {
-        const pill = document.createElement('button');
-        pill.className = `top-channel-pill ${isCurrent ? 'active' : ''}`;
-        pill.textContent = ch.name;
-        pill.onclick = () => switchChannel(ch.id);
-        els.headerChannelPills.appendChild(pill);
-      }
-
-      const block = document.createElement('div');
-      block.className = 'channel-block';
-
-      const item = document.createElement('div');
-      item.className = `channel-item ${isCurrent ? 'active' : ''}`;
-      item.innerHTML = `
-        <div class="channel-name-wrap"><span>${escapeHtml(ch.name)}</span></div>
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `channel-btn${isCurrent ? ' is-active' : ''}`;
+      btn.innerHTML = `
+        <span class="channel-btn-left">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="23 7 16 12 23 17 23 7"></polygon>
+            <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+          </svg>
+          <span class="channel-name">${escapeHtml(ch.name)}</span>
+        </span>
+        <span class="channel-meta mono${hasLiveInCh ? ' has-live' : ''}">
+          ${hasLiveInCh ? 'AO VIVO' : usersInCh.length > 0 ? String(usersInCh.length) : 'Livre'}
+        </span>
       `;
-      item.onclick = () => switchChannel(ch.id);
-      item.oncontextmenu = (e) => openChannelContextMenu(e, ch);
-      block.appendChild(item);
+      btn.onclick = () => switchChannel(ch.id);
+      btn.oncontextmenu = (e) => openChannelContextMenu(e, ch);
+      li.appendChild(btn);
+      els.channelsContainer.appendChild(li);
+    }
 
-      if (usersInCh.length > 0) {
-        const sublist = document.createElement('div');
-        sublist.className = 'channel-users-sublist';
-
-        usersInCh.forEach((u) => {
-          const uRow = document.createElement('div');
-          uRow.className = 'sidebar-voice-user';
-          const initial = (u.username || 'A')[0].toUpperCase();
-          uRow.innerHTML = `
-            <div class="sidebar-user-left">
-              <div class="mini-avatar" style="background:${u.avatarColor}">${initial}</div>
-              <span>${escapeHtml(u.username)}</span>
-            </div>
-            <div class="sidebar-user-badges">
-              ${u.streaming ? `<span class="live-pill-mini">AO VIVO</span>` : ''}
-            </div>
-          `;
-          uRow.oncontextmenu = (e) => openUserContextMenu(e, u);
-          if (u.streaming) {
-            uRow.style.cursor = 'pointer';
-            uRow.onclick = () => {
-              if (u.id === state.clientId) openSelfPreviewCard();
-              else watchFriendStream(u.id);
-            };
-          }
-          sublist.appendChild(uRow);
-        });
-        block.appendChild(sublist);
-      }
-      els.channelsContainer.appendChild(block);
+    // Renderiza seção "Na Sala Agora" exatamente igual ao modelo Google AI Studio
+    const memberListEl = document.getElementById('member-list');
+    const memberCountEl = document.getElementById('member-count');
+    const allUsers = [...state.onlineUsers.values()];
+    if (memberCountEl) memberCountEl.textContent = String(allUsers.length);
+    if (memberListEl) {
+      memberListEl.innerHTML = '';
+      allUsers.forEach((u) => {
+        const isSelf = u.id === state.clientId;
+        const li = document.createElement('li');
+        li.className = 'member-row';
+        const roleLabel = u.streaming ? 'Transmitindo' : isSelf ? 'Você' : 'Online';
+        li.innerHTML = `
+          <div class="member-left">
+            <span class="avatar${isSelf ? ' is-self' : ''}">${escapeHtml(getUserInitials(u.username))}</span>
+            <span class="member-name">${escapeHtml(u.username)}</span>
+          </div>
+          <span class="member-role"${u.streaming ? ' style="color:var(--status-live);font-weight:600;"' : ''}>${roleLabel}</span>
+        `;
+        li.oncontextmenu = (e) => openUserContextMenu(e, u);
+        if (u.streaming) {
+          li.style.cursor = 'pointer';
+          li.title = 'Clique para assistir esta transmissão';
+          li.onclick = () => {
+            if (isSelf) openSelfPreviewCard();
+            else watchFriendStream(u.id);
+          };
+        }
+        memberListEl.appendChild(li);
+      });
     }
   }
 
@@ -3490,33 +3518,45 @@
   }
 
   function updateLocalProfileUI() {
+    const initials = getUserInitials(state.username);
     els.localUsername.textContent = state.username;
-    els.localAvatar.textContent = (state.username || 'A')[0].toUpperCase();
-    els.localAvatar.style.backgroundColor = state.avatarColor;
+    els.localAvatar.textContent = initials;
+    const lobbyAv = document.getElementById('lobby-avatar-preview');
+    if (lobbyAv) lobbyAv.textContent = initials;
+    const chatTag = document.getElementById('chat-room-tag');
+    if (chatTag) chatTag.textContent = state.roomCode;
     els.inputProfileName.value = state.username;
     els.inputRoomCode.value = state.roomCode;
     if (els.sidebarRoomCode) els.sidebarRoomCode.textContent = state.roomCode;
     if (els.headerRoomLabel) els.headerRoomLabel.textContent = state.roomCode;
     if (els.mobileModalRoom) els.mobileModalRoom.textContent = state.roomCode;
 
+    const audioLabels = {
+      pc_no_discord: 'Áudio do dispositivo',
+      window_only: 'Áudio da janela',
+      pc_all: 'Áudio do dispositivo',
+      none: 'Somente vídeo',
+    };
     const resLabel = RESOLUTION_MAP[state.streamSettings.resolution]?.label || '1080p';
-    if (els.localQualityTag) els.localQualityTag.textContent = `${resLabel} @ ${state.streamSettings.fps}fps`;
+    if (els.localQualityTag) els.localQualityTag.textContent = audioLabels[state.streamSettings.audioMode] || `${resLabel} · ${state.streamSettings.fps} FPS`;
     if (els.activePresetPill) els.activePresetPill.textContent = `H.264 GPU • ${resLabel.toUpperCase()} • ${state.streamSettings.fps} FPS`;
   }
 
   function updateStreamControlsUI() {
     updateLocalProfileUI();
     if (state.isStreaming) {
-      els.btnShareScreen.classList.add('active-stream');
-      els.shareBtnText.textContent = 'Parar Stream';
+      els.btnShareScreen.classList.add('active-stream', 'btn-danger');
+      els.btnShareScreen.classList.remove('btn-primary');
+      els.shareBtnText.textContent = 'Encerrar Tela';
       els.dockBtnShare.classList.add('active');
-      els.dockShareLabel.textContent = '⏹️ Encerrar Stream';
+      els.dockShareLabel.textContent = 'Encerrar Tela';
       if (els.mobShareLabel) els.mobShareLabel.textContent = 'Parar';
     } else {
-      els.btnShareScreen.classList.remove('active-stream');
-      els.shareBtnText.textContent = 'Transmitir';
+      els.btnShareScreen.classList.remove('active-stream', 'btn-danger');
+      els.btnShareScreen.classList.add('btn-primary');
+      els.shareBtnText.textContent = 'Compartilhar Tela';
       els.dockBtnShare.classList.remove('active');
-      els.dockShareLabel.textContent = 'Compartilhar Tela + Áudio';
+      els.dockShareLabel.textContent = 'Compartilhar Tela';
       if (els.mobShareLabel) els.mobShareLabel.textContent = 'Transmitir';
     }
   }
@@ -3778,9 +3818,9 @@
   els.tabMonitors.onclick = () => {
     state.sourceTab = 'monitor';
     if (state.selectedSourceId.startsWith('web:')) state.selectedSourceId = 'monitor:0';
-    els.tabMonitors.classList.add('active');
-    els.tabWindows.classList.remove('active');
-    if (els.tabBrowserCam) els.tabBrowserCam.classList.remove('active');
+    els.tabMonitors.classList.add('active', 'is-active');
+    els.tabWindows.classList.remove('active', 'is-active');
+    if (els.tabBrowserCam) els.tabBrowserCam.classList.remove('active', 'is-active');
     if (state.streamSettings.captureEngine === 'legacy_csharp' && state.nativeSources.length === 0) {
       loadNativeSources();
     } else {
@@ -3791,18 +3831,18 @@
   els.tabWindows.onclick = () => {
     state.sourceTab = 'window';
     if (state.selectedSourceId.startsWith('web:')) state.selectedSourceId = 'monitor:0';
-    els.tabWindows.classList.add('active');
-    els.tabMonitors.classList.remove('active');
-    if (els.tabBrowserCam) els.tabBrowserCam.classList.remove('active');
+    els.tabWindows.classList.add('active', 'is-active');
+    els.tabMonitors.classList.remove('active', 'is-active');
+    if (els.tabBrowserCam) els.tabBrowserCam.classList.remove('active', 'is-active');
     loadNativeSources();
   };
 
   if (els.tabBrowserCam) {
     els.tabBrowserCam.onclick = () => {
       state.sourceTab = 'browser';
-      els.tabBrowserCam.classList.add('active');
-      els.tabMonitors.classList.remove('active');
-      els.tabWindows.classList.remove('active');
+      els.tabBrowserCam.classList.add('active', 'is-active');
+      els.tabMonitors.classList.remove('active', 'is-active');
+      els.tabWindows.classList.remove('active', 'is-active');
       renderSourcesGrid();
     };
   }
@@ -4022,6 +4062,9 @@
         roomCode: state.roomCode,
         currentChannelId: state.currentChannelId,
         theme: state.activeTheme,
+        studioSurface: document.documentElement.getAttribute('data-studio-surface') || 'obsidian',
+        studioAccent: document.documentElement.getAttribute('data-studio-accent') || 'indigo',
+        favoriteRooms: getFavoriteRooms(),
         streamSettings: state.streamSettings,
       };
       await fetch('/api/profile', {
@@ -4031,6 +4074,7 @@
       });
     } catch (e) {}
   }
+  window.__saveStudioProfile = saveProfileToServer;
 
   async function loadProfileFromServer() {
     if (!IS_LOCAL_HOST) return;
@@ -4056,6 +4100,19 @@
             localStorage.setItem('streamcord_theme', prof.theme);
             applyThemeModel(state.activeTheme, false);
           }
+          if (prof.studioSurface) {
+            document.documentElement.setAttribute('data-studio-surface', prof.studioSurface);
+            localStorage.setItem('streamcord_studio_surface', prof.studioSurface);
+          }
+          if (prof.studioAccent) {
+            document.documentElement.setAttribute('data-studio-accent', prof.studioAccent);
+            localStorage.setItem('streamcord_studio_accent', prof.studioAccent);
+          }
+          if (typeof window.__syncStudioThemeUI === 'function') window.__syncStudioThemeUI();
+          if (Array.isArray(prof.favoriteRooms)) {
+            const cleanedFavs = prof.favoriteRooms.filter((r) => typeof r === 'string' && r.trim());
+            localStorage.setItem('streamcord_favorites', JSON.stringify(cleanedFavs));
+          }
           if (prof.streamSettings) {
             Object.assign(state.streamSettings, prof.streamSettings);
             if (prof.streamSettings.captureEngine) localStorage.setItem('streamcord_engine', prof.streamSettings.captureEngine);
@@ -4074,6 +4131,8 @@
             }
           }
           updateLocalProfileUI();
+          updateFavoriteButtonUI();
+          renderLobbyFavorites();
           syncStreamModalControls();
         }
       }
@@ -4503,10 +4562,14 @@
     }
   }
 
+  const btnCloseLobby = document.getElementById('btn-close-lobby');
+  const favoritesCountEl = document.getElementById('favorites-count');
+
   function saveFavoriteRooms(list) {
     try {
       localStorage.setItem('streamcord_favorites', JSON.stringify(list));
     } catch (_) {}
+    void saveProfileToServer();
   }
 
   function isRoomFavorited(code) {
@@ -4515,8 +4578,12 @@
 
   function updateFavoriteButtonUI() {
     const fav = isRoomFavorited(state.roomCode);
-    if (btnFavoriteRoom) btnFavoriteRoom.classList.toggle('favorited', fav);
-    if (favoriteRoomIcon) favoriteRoomIcon.textContent = fav ? '⭐' : '☆';
+    if (btnFavoriteRoom) {
+      btnFavoriteRoom.classList.toggle('favorited', fav);
+      btnFavoriteRoom.classList.toggle('is-favorited', fav);
+      btnFavoriteRoom.title = fav ? 'Remover sala dos favoritos' : 'Favoritar esta sala';
+    }
+    if (favoriteRoomIcon) favoriteRoomIcon.textContent = fav ? '★' : '☆';
     if (favoriteRoomLabel) favoriteRoomLabel.textContent = fav ? 'Favorita' : 'Favoritar';
   }
 
@@ -4526,11 +4593,11 @@
     if (idx >= 0) {
       list.splice(idx, 1);
       saveFavoriteRooms(list);
-      showToast(`Sala ${code} removida das favoritas.`, '☆');
+      showToast(`Sala ${code} removida dos favoritos.`, '☆');
     } else {
       list.unshift(code);
       saveFavoriteRooms(list.slice(0, 12));
-      showToast(`Sala ${code} adicionada às favoritas!`, '⭐');
+      showToast(`Sala ${code} salva nos favoritos!`, '★');
     }
     updateFavoriteButtonUI();
     renderLobbyFavorites();
@@ -4539,31 +4606,50 @@
   function renderLobbyFavorites() {
     if (!lobbyFavoritesList) return;
     const favs = getFavoriteRooms();
-    if (favs.length === 0) {
-      lobbyFavoritesList.innerHTML =
-        '<div class="lobby-fav-empty">Nenhuma sala favoritada ainda. Entre em uma sala e clique em ☆ Favoritar no topo!</div>';
-      return;
+    if (favoritesCountEl) {
+      favoritesCountEl.textContent = `${favs.length} ${favs.length === 1 ? 'salva' : 'salvas'}`;
     }
     lobbyFavoritesList.innerHTML = '';
+    if (favs.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'favorites-empty';
+      empty.textContent = 'Nenhuma sala favoritada ainda. Clique na estrela ☆ no topo da sala para salvar aqui.';
+      lobbyFavoritesList.appendChild(empty);
+      return;
+    }
     for (const code of favs) {
-      const item = document.createElement('div');
-      item.className = 'lobby-fav-item';
-      item.innerHTML = `
-        <button type="button" class="lobby-fav-enter" title="Entrar na sala ${escapeHtml(code)}">⭐ ${escapeHtml(code)}</button>
-        <button type="button" class="lobby-fav-remove" title="Remover dos favoritos">✕</button>
+      const li = document.createElement('li');
+      li.className = 'favorite-item';
+      li.innerHTML = `
+        <button type="button" class="favorite-item-main" title="Entrar na sala ${escapeHtml(code)}">
+          <span class="favorite-item-name">${escapeHtml(code)}</span>
+          <span class="favorite-item-meta">
+            <span class="mono">${escapeHtml(code)}</span>
+            <span>·</span>
+            <span>Favorita</span>
+          </span>
+        </button>
+        <button type="button" class="favorite-remove-btn" title="Remover ${escapeHtml(code)} dos favoritos">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
       `;
-      item.querySelector('.lobby-fav-enter').onclick = () => {
+      li.querySelector('.favorite-item-main').onclick = () => {
         playDiscordSound('click');
         enterRoomFromLobby(code, false);
       };
-      item.querySelector('.lobby-fav-remove').onclick = () => {
+      li.querySelector('.favorite-remove-btn').onclick = (e) => {
+        e.stopPropagation();
         playDiscordSound('click');
         const next = getFavoriteRooms().filter((x) => x !== code);
         saveFavoriteRooms(next);
         updateFavoriteButtonUI();
         renderLobbyFavorites();
+        showToast(`Sala ${code} removida dos favoritos.`);
       };
-      lobbyFavoritesList.appendChild(item);
+      lobbyFavoritesList.appendChild(li);
     }
   }
 
@@ -4576,6 +4662,7 @@
     if (state.isStreaming) stopScreenShare(true);
     closeAllWatchedStreams();
 
+    state.hasEnteredRoom = true;
     state.roomCode = cleanCode;
     localStorage.setItem('streamcord_room', state.roomCode);
     state.onlineUsers.clear();
@@ -4584,9 +4671,15 @@
     } catch (_) {
       state.channels = DEFAULT_CHANNELS.map((c) => ({ ...c }));
     }
+    const activeCh = state.channels.find((c) => c.id === state.currentChannelId) || state.channels[0];
+    if (activeCh) {
+      state.currentChannelId = activeCh.id;
+      if (els.stageTitle) els.stageTitle.textContent = activeCh.name;
+    }
     saveProfileToServer();
     updateLocalProfileUI();
     updateFavoriteButtonUI();
+    lastSidebarSig = '';
     renderChannelsSidebar();
 
     if (lobbyOverlay) lobbyOverlay.classList.add('hidden');
@@ -4601,24 +4694,33 @@
     }
   }
 
-  function openRoomLobby(disconnectCurrent = true) {
-    if (disconnectCurrent) {
-      if (state.isStreaming) stopScreenShare(true);
-      closeAllWatchedStreams();
-      if (state.cloudMqtt) {
-        try { state.cloudMqtt.close(); } catch (_) {}
-        state.cloudMqtt = null;
-      }
-      state.cloudConnected = false;
-      state.onlineUsers.clear();
+  function openRoomLobby(fromActiveRoom = true) {
+    if (btnCloseLobby) {
+      btnCloseLobby.classList.toggle('hidden', !fromActiveRoom || !state.hasEnteredRoom);
     }
-    if (lobbyUsernameInput) lobbyUsernameInput.value = state.username;
+    if (lobbyUsernameInput) {
+      lobbyUsernameInput.value = state.username;
+      const lobbyAv = document.getElementById('lobby-avatar-preview');
+      if (lobbyAv) lobbyAv.textContent = getUserInitials(state.username);
+    }
     if (lobbyJoinInput) lobbyJoinInput.value = '';
     if (lobbyCreateNameInput) lobbyCreateNameInput.value = '';
     renderLobbyFavorites();
     if (lobbyOverlay) lobbyOverlay.classList.remove('hidden');
   }
 
+  if (lobbyUsernameInput) {
+    lobbyUsernameInput.addEventListener('input', () => {
+      const lobbyAv = document.getElementById('lobby-avatar-preview');
+      if (lobbyAv) lobbyAv.textContent = getUserInitials(lobbyUsernameInput.value || state.username);
+    });
+  }
+  if (btnCloseLobby) {
+    btnCloseLobby.onclick = () => {
+      playDiscordSound('click');
+      if (lobbyOverlay) lobbyOverlay.classList.add('hidden');
+    };
+  }
   if (btnFavoriteRoom) {
     btnFavoriteRoom.onclick = () => {
       playDiscordSound('click');
@@ -4676,7 +4778,12 @@
   loadProfileFromServer().finally(() => {
     void ensureTurnQuotaChecked();
     void ensureIceServersReady();
+    updateLocalProfileUI();
+    updateFavoriteButtonUI();
+    lastSidebarSig = '';
+    renderChannelsSidebar();
     if (roomFromUrl && roomFromUrl.trim()) {
+      state.hasEnteredRoom = true;
       if (lobbyOverlay) lobbyOverlay.classList.add('hidden');
       connectCloudSignaling();
     } else {
