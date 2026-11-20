@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.15.4';
+  const APP_VERSION = '9.15.5';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -2148,9 +2148,11 @@
   // • TURN TCP (último recurso): reduz mais ~25% para evitar TCP Head-of-Line Blocking
   function getTurnRelayCapBps(height, protocol) {
     const isTcp = protocol === 'tcp';
-    if (height <= 720) return isTcp ? 2_200_000 : 3_000_000;
-    if (height <= 1080) return isTcp ? 3_800_000 : 5_500_000;
-    return isTcp ? 5_000_000 : 7_500_000;
+    // Sem B-frames no WebRTC, 60 FPS reais em jogos rápidos (Deadlock/FPS) exigem >= 6 Mbps em 720p e >= 8.5 Mbps em 1080p
+    // para o FrameDropper do WebRTC não descartar 1 a cada 3 quadros (60 -> 40 FPS).
+    if (height <= 720) return isTcp ? 4_000_000 : 6_000_000;
+    if (height <= 1080) return isTcp ? 5_500_000 : 8_500_000;
+    return isTcp ? 7_000_000 : 11_000_000;
   }
 
   function getViewerEncoding(entry = null) {
@@ -3031,9 +3033,9 @@
       if (ws.inEntry !== inEntry || !state.watchedStreams.has(streamerId)) return;
       if (ev.receiver) {
         try {
-          // 25ms de buffer leve no receptor absorve micro-jitter do TURN sem travar quadros (60FPS contínuos)
-          if ('playoutDelayHint' in ev.receiver) ev.receiver.playoutDelayHint = 0.025;
-          if ('jitterBufferTarget' in ev.receiver) ev.receiver.jitterBufferTarget = 25;
+          // 40ms de buffer leve no receptor absorve jitter do TURN sem descartar quadros (60FPS cravados)
+          if ('playoutDelayHint' in ev.receiver) ev.receiver.playoutDelayHint = 0.04;
+          if ('jitterBufferTarget' in ev.receiver) ev.receiver.jitterBufferTarget = 40;
         } catch (_) {}
       }
       if (ev.track.kind === 'video') {
