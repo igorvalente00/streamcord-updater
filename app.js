@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.15.5';
+  const APP_VERSION = '9.15.6';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -1721,8 +1721,12 @@
       // Redimensionar no getDisplayMedia força o Chromium a copiar VRAM -> RAM (CPU Readback + libyuv),
       // derrubando o FPS do jogo e travando a captura em ~40-45 FPS.
       // O downscale para 720p/1080p é feito 100% na GPU via scaleResolutionDownBy no NVENC/D3D11!
+      // Em monitores 2K/1440p (14.7 MB/frame), pedir max:60 no getDisplayMedia faz o timer interno do Chromium
+      // somar 16.6ms + ~5.5ms de captura = 22.2ms (~45 FPS teto). Pedir 120 FPS na captura (8.3ms) e limitar em
+      // 60 FPS no RTCRtpSender (maxFramerate) entrega 60 FPS cravados em qualquer tela!
+      const captureFps = cfg.fps >= 60 ? 120 : cfg.fps;
       const vConstraints = {
-        frameRate: { ideal: cfg.fps, max: cfg.fps },
+        frameRate: { ideal: captureFps, max: captureFps },
         resizeMode: 'none',
       };
       try {
@@ -1755,8 +1759,12 @@
       // Redimensionar no getDisplayMedia força o Chromium a copiar VRAM -> RAM (CPU Readback + libyuv),
       // derrubando o FPS do jogo e travando a captura em ~40-45 FPS.
       // O downscale para 720p/1080p é feito 100% na GPU via scaleResolutionDownBy no NVENC/D3D11!
+      // Em monitores 2K/1440p (14.7 MB/frame), pedir max:60 no getDisplayMedia faz o timer interno do Chromium
+      // somar 16.6ms + ~5.5ms de captura = 22.2ms (~45 FPS teto). Pedir 120 FPS na captura (8.3ms) e limitar em
+      // 60 FPS no RTCRtpSender (maxFramerate) entrega 60 FPS cravados em qualquer tela!
+      const captureFps = cfg.fps >= 60 ? 120 : cfg.fps;
       const vConstraints = {
-        frameRate: { ideal: cfg.fps, max: cfg.fps },
+        frameRate: { ideal: captureFps, max: captureFps },
         resizeMode: 'none',
       };
       mediaStream = await navigator.mediaDevices.getDisplayMedia({
