@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.15.1';
+  const APP_VERSION = '9.15.2';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -14,8 +14,21 @@
     iceServers: [...FALLBACK_STUN_SERVERS],
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require',
-    iceCandidatePoolSize: 8,
+    iceCandidatePoolSize: 0,
   };
+
+  function getP2POnlyRtcConfig() {
+    const stunOnly = (RTC_CONFIG.iceServers || []).filter((srv) => {
+      if (!srv || !srv.urls) return false;
+      const urls = Array.isArray(srv.urls) ? srv.urls : [srv.urls];
+      return urls.every((u) => /^stun:/i.test(String(u)));
+    });
+    return {
+      ...RTC_CONFIG,
+      iceServers: stunOnly.length > 0 ? stunOnly : [...FALLBACK_STUN_SERVERS],
+      iceCandidatePoolSize: 0,
+    };
+  }
 
   let iceServersFetchedAt = 0;
   let iceServersPromise = null;
@@ -1089,6 +1102,7 @@
       state.screenOutPcs.delete(viewerId);
       if (entry.watchdogTimer) clearTimeout(entry.watchdogTimer);
       if (entry.relayFlushTimer) clearTimeout(entry.relayFlushTimer);
+      if (entry.p2pFallbackTimer) clearTimeout(entry.p2pFallbackTimer);
       entry.pc.close();
       rebalanceViewerBitrates();
     }
@@ -1219,7 +1233,8 @@
 
       case 'screen-offer': {
         if (state.watchedStreams.has(msg.senderId)) {
-          await handleIncomingScreenOffer(msg.senderId, msg.sdp, msg.sessionId);
+          const allowTurn = typeof msg.allowTurn === 'boolean' ? msg.allowTurn : true;
+          await handleIncomingScreenOffer(msg.senderId, msg.sdp, msg.sessionId, allowTurn);
         }
         break;
       }
@@ -2131,9 +2146,9 @@
   // • TURN TCP (último recurso): reduz mais ~25% para evitar TCP Head-of-Line Blocking
   function getTurnRelayCapBps(height, protocol) {
     const isTcp = protocol === 'tcp';
-    if (height <= 720) return isTcp ? 1_600_000 : 2_000_000;
-    if (height <= 1080) return isTcp ? 2_500_000 : 3_500_000;
-    return isTcp ? 3_500_000 : 5_000_000;
+    if (height <= 720) return isTcp ? 2_200_000 : 3_000_000;
+    if (height <= 1080) return isTcp ? 3_800_000 : 5_500_000;
+    return isTcp ? 5_000_000 : 7_500_000;
   }
 
   function getViewerEncoding(entry = null) {
@@ -2202,9 +2217,12 @@
         const params = entry.videoSender.getParameters();
         if (!params.encodings?.length) return;
         Object.assign(params.encodings[0], encoding);
-        // Descoberta Crystal/GoLive: 'maintain-resolution' impede o QP quality-scaler do Chromium
-        // de derrubar 1080p/2K para 360p/540p nos primeiros segundos da stream (bug do BWE frio)!
-        params.degradationPreference = 'maintain-resolution';
+        // Prioriza 60 FPS cravados ('maintain-framerate') quando FPS > 30 ou modo movimento;
+        // evita que o Chromium corte a taxa pela metade (60 -> 30 FPS) em oscilações ou no TURN!
+        const targetDeg = (state.streamSettings.preset === 'detail' && (state.streamSettings.fps || 60) <= 30)
+          ? 'maintain-resolution'
+          : 'maintain-framerate';
+        params.degradationPreference = targetDeg;
         try {
           await entry.videoSender.setParameters(params);
         } catch (degErr) {
@@ -2233,7 +2251,7 @@
     }
   }
 
-  async function startScreenOutPcForViewer(viewerId, forceRecreate = false, forceAlt = false, requestChannelId = null) {
+  async function startScreenOutPcForViewer(viewerId, forceRecreate = false, forceAlt = false, requestChannelId = null, allowTurn = false) {
     if (!state.isStreaming || !state.localScreenStream || viewerId === state.clientId) return;
 
     const viewerKnownChannel = state.onlineUsers.get(viewerId)?.channelId;
@@ -2264,18 +2282,22 @@
     }
 
     if (existing) closeScreenOutPc(viewerId);
-    await ensureIceServersReady();
+    if (allowTurn) {
+      await ensureIceServersReady();
+    }
 
     const sessionId = 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    const pc = new RTCPeerConnection(allowTurn ? RTC_CONFIG : getP2POnlyRtcConfig());
     const outEntry = {
       pc,
       sessionId,
+      allowTurn: Boolean(allowTurn),
       createdAt: Date.now(),
       offerSent: false,
       localIceBuffer: [],
       relayIceBuffer: [],
       relayFlushTimer: null,
+      p2pFallbackTimer: null,
       remoteDescSet: false,
       pendingCandidates: [],
       watchdogTimer: null,
@@ -2285,6 +2307,23 @@
     state.screenOutPcs.set(viewerId, outEntry);
 
     const isCurrent = () => state.screenOutPcs.get(viewerId) === outEntry;
+
+    const triggerTurnFallback = () => {
+      if (!isCurrent() || !state.isStreaming || outEntry.allowTurn) return;
+      if (outEntry.p2pFallbackTimer) {
+        clearTimeout(outEntry.p2pFallbackTimer);
+        outEntry.p2pFallbackTimer = null;
+      }
+      const st = pc.connectionState || pc.iceConnectionState;
+      if (st === 'connected' || st === 'completed') return;
+      void startScreenOutPcForViewer(viewerId, true, forceAlt, requestChannelId, true);
+    };
+
+    if (!allowTurn) {
+      // Fase 1 (P2P Estreito): tenta 100% STUN/IPv4/IPv6 sem TURN por 3.8s;
+      // só recorre ao Cloudflare TURN se o P2P realmente não fechar (ex.: 4G/5G/CGNAT).
+      outEntry.p2pFallbackTimer = setTimeout(triggerTurnFallback, 3800);
+    }
 
     const sendOrQueueIce = (cand) => {
       if (!isCurrent()) return;
@@ -2319,8 +2358,16 @@
         (!pc.connectionState && ['connected', 'completed'].includes(pc.iceConnectionState));
       if (pc.connectionState === 'failed' || pc.iceConnectionState === 'failed' ||
           pc.signalingState === 'closed') {
+        if (!outEntry.allowTurn && pc.signalingState !== 'closed') {
+          triggerTurnFallback();
+          return;
+        }
         closeScreenOutPc(viewerId);
       } else if (connected) {
+        if (outEntry.p2pFallbackTimer) {
+          clearTimeout(outEntry.p2pFallbackTimer);
+          outEntry.p2pFallbackTimer = null;
+        }
         if (outEntry.relayFlushTimer) {
           clearTimeout(outEntry.relayFlushTimer);
           outEntry.relayFlushTimer = null;
@@ -2336,7 +2383,7 @@
               const stats = await pc.getStats();
               const reports = [...stats.values()].filter((r) => r.type === 'outbound-rtp' && r.kind === 'video');
               if (isCurrent() && reports.length && reports.every((r) => r.framesSent === 0)) {
-                void startScreenOutPcForViewer(viewerId, true, true, requestChannelId);
+                void startScreenOutPcForViewer(viewerId, true, true, requestChannelId, outEntry.allowTurn);
               }
             } catch (e) {}
           }, 3200);
@@ -2390,6 +2437,7 @@
       publishDirect(viewerId, {
         type: 'screen-offer',
         sessionId,
+        allowTurn: Boolean(allowTurn),
         sdp: pc.localDescription,
       });
 
@@ -2846,7 +2894,7 @@
     { passive: true }
   );
 
-  async function handleIncomingScreenOffer(streamerId, sdp, sessionId) {
+  async function handleIncomingScreenOffer(streamerId, sdp, sessionId, allowTurn = true) {
     const ws = state.watchedStreams.get(streamerId);
     if (!ws) return;
 
@@ -2866,9 +2914,11 @@
     }
 
     ws.offerReceived = true;
-    setStreamCardStatus(ws, '🔗 Oferta P2P recebida, conectando...');
-    await ensureIceServersReady();
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    setStreamCardStatus(ws, allowTurn ? '🌐 Conectando via rota segura TURN...' : '🔗 Oferta P2P recebida, conectando direto...');
+    if (allowTurn) {
+      await ensureIceServersReady();
+    }
+    const pc = new RTCPeerConnection(allowTurn ? RTC_CONFIG : getP2POnlyRtcConfig());
     const earlyCandidates = (sessionId && state.earlyIceBySession.get(sessionId)) || [];
     if (sessionId) state.earlyIceBySession.delete(sessionId);
 
@@ -2876,6 +2926,7 @@
       pc,
       streamerId,
       sessionId,
+      allowTurn: Boolean(allowTurn),
       createdAt: Date.now(),
       remoteVideoStream: new MediaStream(),
       answerSent: false,
@@ -2940,7 +2991,11 @@
       } else if (st === 'connected' || st === 'completed') {
         setStreamCardStatus(ws, '📡 P2P conectado, aguardando primeiro quadro...');
       } else if (st === 'failed' || st === 'closed') {
-        setStreamCardStatus(ws, '⚠️ Conexão P2P bloqueada pelo NAT/Firewall. Clique em Reconectar.', true);
+        if (!inEntry.allowTurn && st === 'failed') {
+          setStreamCardStatus(ws, '🌐 P2P bloqueado pelo NAT — ativando rota TURN automaticamente...');
+        } else {
+          setStreamCardStatus(ws, '⚠️ Conexão P2P bloqueada pelo NAT/Firewall. Clique em Reconectar.', true);
+        }
       } else if (st === 'disconnected') {
         setStreamCardStatus(ws, '⚠️ Conexão instável, tentando restabelecer...', true);
       }
