@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.15.2';
+  const APP_VERSION = '9.15.3';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -1717,13 +1717,13 @@
   async function acquireZeroCopyGpuStream(cfg, resSpec, includeDisplayAudio = false) {
     // Captura 100% DirectX 11 / WGC Zero-Copy Nativa do Chromium para TODAS as Telas (Monitor 1, Monitor 2+) e Janelas de Jogos (Deadlock, CS2, Vulkan/DX12)!
     if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+      // IMPORTANTE (GPU Zero-Copy Real): NÃO passar width/height no getDisplayMedia!
+      // Redimensionar no getDisplayMedia força o Chromium a copiar VRAM -> RAM (CPU Readback + libyuv),
+      // derrubando o FPS do jogo e travando a captura em ~40-45 FPS.
+      // O downscale para 720p/1080p é feito 100% na GPU via scaleResolutionDownBy no NVENC/D3D11!
       const vConstraints = {
         frameRate: { ideal: cfg.fps, max: cfg.fps },
       };
-      if (cfg.resolution !== 'source' && resSpec && resSpec.heightNum > 0) {
-        vConstraints.width = { ideal: resSpec.width, max: resSpec.width };
-        vConstraints.height = { ideal: resSpec.height, max: resSpec.height };
-      }
       try {
         const dxgiStream = await navigator.mediaDevices.getDisplayMedia({
           video: vConstraints,
@@ -1750,13 +1750,13 @@
     const wantAudio = cfg.audioMode !== 'none';
 
     if (state.selectedSourceId === 'web:display' && navigator.mediaDevices?.getDisplayMedia) {
+      // IMPORTANTE (GPU Zero-Copy Real): NÃO passar width/height no getDisplayMedia!
+      // Redimensionar no getDisplayMedia força o Chromium a copiar VRAM -> RAM (CPU Readback + libyuv),
+      // derrubando o FPS do jogo e travando a captura em ~40-45 FPS.
+      // O downscale para 720p/1080p é feito 100% na GPU via scaleResolutionDownBy no NVENC/D3D11!
       const vConstraints = {
         frameRate: { ideal: cfg.fps, max: cfg.fps },
       };
-      if (cfg.resolution !== 'source' && resSpec && resSpec.heightNum > 0) {
-        vConstraints.width = { ideal: resSpec.width, max: resSpec.width };
-        vConstraints.height = { ideal: resSpec.height, max: resSpec.height };
-      }
       mediaStream = await navigator.mediaDevices.getDisplayMedia({
         video: vConstraints,
         audio: wantAudio,
@@ -2170,10 +2170,15 @@
       perViewerBps = Math.min(perViewerBps, relayCap);
     }
 
-    // Mantém resolução nativa (scale = 1.0) enquanto houver >= 2.5 Mbps (ou se já estiver em 720p no TURN)
+    // Calcula o fator de escala para o encoder de hardware (NVENC/D3D11) reduzir diretamente na GPU
+    // sem exigir cópia VRAM -> RAM no getDisplayMedia!
     let scale = 1;
+    if (sourceHeight >= 360 && selectedHeight && sourceHeight > selectedHeight) {
+      scale = sourceHeight / selectedHeight;
+    }
     if (perViewerBps < 2500000 && height > 720) {
-      scale = Math.min(height / 720, Math.sqrt(2500000 / perViewerBps));
+      const targetScale720 = sourceHeight >= 360 ? sourceHeight / 720 : height / 720;
+      scale = Math.max(scale, Math.min(targetScale720, Math.sqrt(2500000 / perViewerBps)));
     }
 
     return {
