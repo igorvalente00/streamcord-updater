@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.15.3';
+  const APP_VERSION = '9.15.4';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -1723,6 +1723,7 @@
       // O downscale para 720p/1080p é feito 100% na GPU via scaleResolutionDownBy no NVENC/D3D11!
       const vConstraints = {
         frameRate: { ideal: cfg.fps, max: cfg.fps },
+        resizeMode: 'none',
       };
       try {
         const dxgiStream = await navigator.mediaDevices.getDisplayMedia({
@@ -1756,6 +1757,7 @@
       // O downscale para 720p/1080p é feito 100% na GPU via scaleResolutionDownBy no NVENC/D3D11!
       const vConstraints = {
         frameRate: { ideal: cfg.fps, max: cfg.fps },
+        resizeMode: 'none',
       };
       mediaStream = await navigator.mediaDevices.getDisplayMedia({
         video: vConstraints,
@@ -2432,7 +2434,12 @@
       preferOptimalGameCodec(pc, forceAlt);
       const offer = await pc.createOffer();
       if (!isCurrent()) return;
-      const targetKbps = Math.round(((outEntry.desiredEncoding && outEntry.desiredEncoding.maxBitrate) || 10000000) / 1000);
+      let targetKbps = Math.round(((outEntry.desiredEncoding && outEntry.desiredEncoding.maxBitrate) || 10000000) / 1000);
+      if (allowTurn) {
+        const resH = RESOLUTION_MAP[state.streamSettings.resolution]?.heightNum || 1080;
+        const turnCapKbps = Math.round(getTurnRelayCapBps(resH, 'udp') / 1000);
+        targetKbps = Math.min(targetKbps, turnCapKbps);
+      }
       offer.sdp = tuneVideoBitrateSdp(preferStereoOpus(offer.sdp), targetKbps);
       await pc.setLocalDescription(offer);
       if (!isCurrent()) return;
