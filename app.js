@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.16.1';
+  const APP_VERSION = '9.16.2';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -1890,7 +1890,7 @@
 
   function sendNativeGpuFrameToChannel(dc, entry, frameInfo) {
     if (!dc || dc.readyState !== 'open') return;
-    if (dc.bufferedAmount > 768 * 1024) {
+    if (dc.bufferedAmount > 1536 * 1024) {
       entry.gpuAwaitKey = true;
       return;
     }
@@ -2046,11 +2046,45 @@
     let decoderConfigured = false;
     let awaitingKey = true;
     const assemblies = new Map();
+    const frameQueue = [];
+    let rafId = 0;
     ws.gpuFramesDecoded = 0;
     ws.gpuBytesReceived = 0;
     ws.gpuWidth = 0;
     ws.gpuHeight = 0;
     ws.gpuActive = true;
+
+    const renderLoop = () => {
+      if (ws.inEntry !== inEntry) {
+        while (frameQueue.length > 0) {
+          try { frameQueue.shift().close(); } catch (_) {}
+        }
+        rafId = 0;
+        return;
+      }
+      // Mantém fila enxuta (máx 2 quadros) para absorver bursts de rede SCTP sem aumentar latência
+      while (frameQueue.length > 2) {
+        try { frameQueue.shift().close(); } catch (_) {}
+      }
+      if (frameQueue.length > 0 && canvas && ctx) {
+        const frame = frameQueue.shift();
+        try {
+          if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+            canvas.width = frame.displayWidth;
+            canvas.height = frame.displayHeight;
+          }
+          if (canvas.classList.contains('hidden')) {
+            canvas.classList.remove('hidden');
+            if (ws.videoEl) ws.videoEl.classList.add('hidden');
+          }
+          ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+        } finally {
+          frame.close();
+        }
+      }
+      rafId = requestAnimationFrame(renderLoop);
+    };
+    rafId = requestAnimationFrame(renderLoop);
 
     const createDecoder = (codecStr) => {
       if (decoder) {
@@ -2058,40 +2092,30 @@
       }
       decoder = new VideoDecoder({
         output: (frame) => {
-          try {
-            if (ws.inEntry !== inEntry) {
-              frame.close();
-              return;
-            }
-            if (canvas && ctx) {
-              if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
-                canvas.width = frame.displayWidth;
-                canvas.height = frame.displayHeight;
-              }
-              if (canvas.classList.contains('hidden')) {
-                canvas.classList.remove('hidden');
-                if (ws.videoEl) ws.videoEl.classList.add('hidden');
-              }
-              ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
-            }
-            ws.gpuFramesDecoded = (ws.gpuFramesDecoded || 0) + 1;
-            ws.gpuWidth = frame.displayWidth;
-            ws.gpuHeight = frame.displayHeight;
-            if (!ws.webrtcVideoActive) {
-              ws.webrtcVideoActive = true;
-              setStreamCardStatus(ws, null);
-              if (ws.watchRetryTimer) {
-                clearInterval(ws.watchRetryTimer);
-                ws.watchRetryTimer = null;
-              }
-              if (ws.natWarningTimer) {
-                clearTimeout(ws.natWarningTimer);
-                ws.natWarningTimer = null;
-              }
-            }
-          } finally {
+          if (ws.inEntry !== inEntry) {
             frame.close();
+            return;
           }
+          ws.gpuFramesDecoded = (ws.gpuFramesDecoded || 0) + 1;
+          ws.gpuWidth = frame.displayWidth;
+          ws.gpuHeight = frame.displayHeight;
+          if (!ws.webrtcVideoActive) {
+            ws.webrtcVideoActive = true;
+            setStreamCardStatus(ws, null);
+            if (ws.watchRetryTimer) {
+              clearInterval(ws.watchRetryTimer);
+              ws.watchRetryTimer = null;
+            }
+            if (ws.natWarningTimer) {
+              clearTimeout(ws.natWarningTimer);
+              ws.natWarningTimer = null;
+            }
+          }
+          // Se acumular > 3 quadros decodificados antes do VSync, descarta o mais antigo sem quebrar H.264
+          while (frameQueue.length >= 3) {
+            try { frameQueue.shift().close(); } catch (_) {}
+          }
+          frameQueue.push(frame);
         },
         error: () => {
           decoderConfigured = false;
@@ -2161,7 +2185,10 @@
 
       try {
         if (decoder && decoder.state === 'configured') {
-          if (decoder.decodeQueueSize > 4 && !isKey) return;
+          if (decoder.decodeQueueSize > 10 && !isKey) {
+            awaitingKey = true;
+            return;
+          }
           if (isKey) awaitingKey = false;
           decoder.decode(new EncodedVideoChunk({
             type: isKey ? 'key' : 'delta',
