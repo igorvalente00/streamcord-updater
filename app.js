@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.16.8';
+  const APP_VERSION = '9.16.9';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -385,10 +385,13 @@
     localAudioWs: null,
     nativeGpuWs: null,
     nativeGpuActive: false,
+    nativeGpuTurnEconomy: false,
+    nativeGpuSwitching: false,
     nativeGpuEncoder: 'h264_nvenc',
     nativeGpuWidth: 0,
     nativeGpuHeight: 0,
     nativeGpuLastKeyframe: null,
+    autoUpdateScheduled: false,
     audioCtx: null,
     audioDestNode: null,
     nextAudioTime: 0,
@@ -924,6 +927,24 @@
     }
   }
 
+  function maybeTriggerAutoUpdate() {
+    if (!state.updateAvailable || state.isApplyingUpdate || state.autoUpdateScheduled) return;
+    // Só atualiza automaticamente quando não está transmitindo nem assistindo stream (para não derrubar call!)
+    if (state.isStreaming || state.watchedStreams.size > 0) return;
+    state.autoUpdateScheduled = true;
+    const ver = state.latestVersion || 'nova';
+    showToast(`🚀 Nova versão v${ver} disponível! Atualizando automaticamente em 3s...`, '⬇️');
+    syncUpdateButtonsUI(`⏳ Atualizando v${ver}...`, true);
+    setTimeout(() => {
+      if (state.isStreaming || state.watchedStreams.size > 0) {
+        state.autoUpdateScheduled = false;
+        syncUpdateButtonsUI(`⬇️ Atualizar v${ver}`, false);
+        return;
+      }
+      void triggerInPlaceUpdate();
+    }, 3200);
+  }
+
   async function checkAppUpdate(manualClick = false) {
     const prevLabel = els.updateBtnLabel ? els.updateBtnLabel.textContent : '⬇️ Atualizar';
     if (manualClick) {
@@ -943,6 +964,7 @@
               window.location.reload();
               return;
             }
+            maybeTriggerAutoUpdate();
           } else {
             state.updateAvailable = false;
             syncUpdateButtonsUI('⬇️ Atualizar', false);
@@ -964,6 +986,7 @@
           await triggerInPlaceUpdate();
           return;
         }
+        maybeTriggerAutoUpdate();
       } else {
         state.updateAvailable = false;
         syncUpdateButtonsUI('⬇️ Atualizar', false);
@@ -1984,6 +2007,113 @@
     }
   }
 
+  function buildNativeGpuWsUrl(cfg, resSpec, wsProto, turnEconomy = false) {
+    const targetH = cfg.resolution === 'source' ? 0 : (resSpec.heightNum || 1080);
+    // P2P Direto (custo $0): teto normal; TURN (Cloudflare): modo econômico (-cq 29, 2.2-4.8 Mbps -> ~1.1-1.5 GB/h em 1080p!)
+    const maxVbrByRes = turnEconomy
+      ? (targetH > 0 && targetH <= 720 ? 2200 : (targetH > 0 && targetH <= 1080 ? 3400 : 4800))
+      : (targetH > 0 && targetH <= 720 ? 4500 : (targetH > 0 && targetH <= 1080 ? 6500 : 9000));
+    const reqBitrate = Math.min(maxVbrByRes, Math.max(turnEconomy ? 1600 : 2500, Number(cfg.bitrateKbps) || maxVbrByRes));
+    const cqParam = turnEconomy ? 29 : 26;
+    const monMatch = String(state.selectedSourceId || '').match(/^monitor:(\d+)$/);
+    const winMatch = String(state.selectedSourceId || '').match(/^window:(\d+)$/);
+    const monIdx = monMatch ? Number(monMatch[1]) : 0;
+    const hwndParam = (state.sourceTab === 'window' && winMatch) ? `&hwnd=${winMatch[1]}` : '';
+    const econParam = turnEconomy ? '&economy=1' : '&economy=0';
+    return {
+      url: `${wsProto}//${window.location.host}/ws-gpu-video?monitor=${monIdx}${hwndParam}&height=${targetH}&fps=${cfg.fps}&bitrate=${reqBitrate}&cq=${cqParam}${econParam}`,
+      reqBitrate,
+    };
+  }
+
+  function switchNativeGpuRouteEconomy(turnEconomy) {
+    if (!state.isStreaming || !state.nativeGpuActive || state.nativeGpuSwitching || !IS_LOCAL_HOST) return;
+    state.nativeGpuSwitching = true;
+    const cfg = state.streamSettings;
+    const resSpec = RESOLUTION_MAP[cfg.resolution] || RESOLUTION_MAP['1080'];
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const { url, reqBitrate } = buildNativeGpuWsUrl(cfg, resSpec, wsProto, turnEconomy);
+    const oldWs = state.nativeGpuWs;
+
+    const newWs = new WebSocket(url);
+    newWs.binaryType = 'arraybuffer';
+    let swapped = false;
+    const failTimer = setTimeout(() => {
+      if (!swapped) {
+        state.nativeGpuSwitching = false;
+        try { newWs.close(); } catch (_) {}
+      }
+    }, 3000);
+
+    newWs.onmessage = (ev) => {
+      if (!(ev.data instanceof ArrayBuffer) || ev.data.byteLength <= 17) return;
+      const dv = new DataView(ev.data);
+      const isKey = (dv.getUint8(0) & 1) === 1;
+      const seq = dv.getUint32(1, true);
+      const tsMs = dv.getUint32(5, true);
+      const width = dv.getUint16(9, true);
+      const height = dv.getUint16(11, true);
+      const payloadLen = dv.getUint32(13, true);
+      if (17 + payloadLen > ev.data.byteLength) return;
+      const payload = new Uint8Array(ev.data, 17, payloadLen);
+
+      state.nativeGpuWidth = width;
+      state.nativeGpuHeight = height;
+      const frameInfo = { seq, tsMs, isKey, width, height, payload };
+
+      if (!swapped) {
+        if (!isKey) return;
+        swapped = true;
+        clearTimeout(failTimer);
+        state.nativeGpuWs = newWs;
+        state.nativeGpuTurnEconomy = Boolean(turnEconomy);
+        state.nativeGpuSwitching = false;
+        state.nativeGpuLastKeyframe = frameInfo;
+        for (const entry of state.screenOutPcs.values()) {
+          if (entry) entry.gpuAwaitKey = true;
+        }
+        if (oldWs && oldWs !== newWs) {
+          try { oldWs.close(); } catch (_) {}
+        }
+        const mbpsLabel = (reqBitrate / 1000).toFixed(1);
+        showToast(
+          turnEconomy
+            ? `🌿 Modo Econômico TURN ativo (${mbpsLabel} Mbps VBR • 60 FPS)`
+            : `⚡ Rota P2P Direta — qualidade máxima (${mbpsLabel} Mbps VBR)`,
+          turnEconomy ? '🌿' : '⚡'
+        );
+      }
+      if (state.isStreaming && state.nativeGpuWs === newWs) {
+        broadcastNativeGpuFrame(frameInfo);
+      }
+    };
+
+    newWs.onerror = () => {
+      if (!swapped) {
+        clearTimeout(failTimer);
+        state.nativeGpuSwitching = false;
+      }
+    };
+
+    newWs.onclose = () => {
+      if (!swapped) {
+        clearTimeout(failTimer);
+        state.nativeGpuSwitching = false;
+      } else if (state.nativeGpuWs === newWs && state.isStreaming) {
+        stopScreenShare(true);
+        showToast('Captura nativa GPU encerrada.', '⚠️');
+      }
+    };
+  }
+
+  function syncNativeGpuRouteEconomy() {
+    if (!state.isStreaming || !state.nativeGpuActive || state.nativeGpuSwitching) return;
+    const anyRelayed = [...state.screenOutPcs.values()].some((e) => e && e.isRelayed);
+    if (anyRelayed !== state.nativeGpuTurnEconomy) {
+      switchNativeGpuRouteEconomy(anyRelayed);
+    }
+  }
+
   async function tryStartNativeGpuCapture(cfg, resSpec, wsProto) {
     if (!IS_LOCAL_HOST || (state.sourceTab !== 'monitor' && state.sourceTab !== 'window') || typeof VideoDecoder === 'undefined') {
       return null;
@@ -2012,15 +2142,9 @@
     }
 
     state.nativeGpuEncoder = status.encoder || 'h264_nvenc';
-    const targetH = cfg.resolution === 'source' ? 0 : (resSpec.heightNum || 1080);
-    // Teto VBR econômico por resolução (em VBR -cq 26, a média real cai ~50-70% em relação ao teto!)
-    const maxVbrByRes = targetH > 0 && targetH <= 720 ? 4500 : (targetH > 0 && targetH <= 1080 ? 6500 : 9000);
-    const reqBitrate = Math.min(maxVbrByRes, Math.max(2500, Number(cfg.bitrateKbps) || 6500));
-    const monMatch = String(state.selectedSourceId || '').match(/^monitor:(\d+)$/);
-    const winMatch = String(state.selectedSourceId || '').match(/^window:(\d+)$/);
-    const monIdx = monMatch ? Number(monMatch[1]) : 0;
-    const hwndParam = (state.sourceTab === 'window' && winMatch) ? `&hwnd=${winMatch[1]}` : '';
-    const wsUrl = `${wsProto}//${window.location.host}/ws-gpu-video?monitor=${monIdx}${hwndParam}&height=${targetH}&fps=${cfg.fps}&bitrate=${reqBitrate}`;
+    state.nativeGpuTurnEconomy = false;
+    state.nativeGpuSwitching = false;
+    const { url: wsUrl } = buildNativeGpuWsUrl(cfg, resSpec, wsProto, false);
 
     return await new Promise((resolve) => {
       let settled = false;
@@ -2408,6 +2532,8 @@
       state.nativeGpuWs = null;
     }
     state.nativeGpuActive = false;
+    state.nativeGpuTurnEconomy = false;
+    state.nativeGpuSwitching = false;
     state.nativeGpuLastKeyframe = null;
     state.nativeGpuWidth = 0;
     state.nativeGpuHeight = 0;
@@ -2441,6 +2567,7 @@
       announcePresence(false);
     }
     updateStreamControlsUI();
+    maybeTriggerAutoUpdate();
   }
 
   // =========================================================================
@@ -2694,6 +2821,7 @@
       }
       void applyViewerEncoding(entry);
     }
+    syncNativeGpuRouteEconomy();
   }
 
   async function startScreenOutPcForViewer(viewerId, forceRecreate = false, forceAlt = false, requestChannelId = null, allowTurn = false) {
@@ -3323,6 +3451,7 @@
     renderStageParticipants();
     refreshStreamViewerBadges();
     if (streamerId !== state.clientId) announcePresence(false);
+    maybeTriggerAutoUpdate();
   }
 
   function closeAllWatchedStreams() {
