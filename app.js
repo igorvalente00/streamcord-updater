@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.16.3';
+  const APP_VERSION = '9.16.4';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -1373,26 +1373,20 @@
       state.hasNativeBackend = false;
       state.nativeSources = [];
       state.sourceTab = 'browser';
-      els.tabMonitors.classList.remove('active');
-      els.tabWindows.classList.remove('active');
-      if (els.tabBrowserCam) els.tabBrowserCam.classList.add('active');
+      els.tabMonitors.classList.remove('active', 'is-active');
+      els.tabWindows.classList.remove('active', 'is-active');
+      if (els.tabBrowserCam) els.tabBrowserCam.classList.add('active', 'is-active');
       renderSourcesGrid();
       return;
     }
 
-    if (state.streamSettings.captureEngine !== 'legacy_csharp') {
-      state.hasNativeBackend = true;
-      renderSourcesGrid();
-      return;
-    }
-
-    els.sourcesGrid.innerHTML = `<div class="sources-loading">Carregando monitores, janelas e opções mobile...</div>`;
+    els.sourcesGrid.innerHTML = `<div class="sources-loading" style="grid-column:1/-1;font-size:12px;color:var(--text-muted);padding:10px 4px;">Carregando telas e janelas abertas...</div>`;
     try {
       const res = await fetch('/api/sources?t=' + Date.now());
       if (!res.ok) throw new Error('Sem backend C# local');
       const data = await res.json();
       state.nativeSources = data.sources || [];
-      state.hasNativeBackend = state.nativeSources.length > 0;
+      state.hasNativeBackend = true;
     } catch (e) {
       state.hasNativeBackend = false;
       state.nativeSources = [];
@@ -1400,9 +1394,9 @@
 
     if (!state.hasNativeBackend) {
       state.sourceTab = 'browser';
-      els.tabMonitors.classList.remove('active');
-      els.tabWindows.classList.remove('active');
-      if (els.tabBrowserCam) els.tabBrowserCam.classList.add('active');
+      els.tabMonitors.classList.remove('active', 'is-active');
+      els.tabWindows.classList.remove('active', 'is-active');
+      if (els.tabBrowserCam) els.tabBrowserCam.classList.add('active', 'is-active');
     }
     renderSourcesGrid();
   }
@@ -1455,51 +1449,48 @@
       return;
     }
 
-    if (state.streamSettings.captureEngine !== 'legacy_csharp') {
-      const modeTitle = state.sourceTab === 'window' ? 'Janela específica do jogo / aplicativo' : 'Monitor / Tela inteira (DirectX 11 GPU)';
-      const readoutEl = document.getElementById('settings-source-readout');
+    const filtered = state.nativeSources.filter((s) => s.type === state.sourceTab);
+    const readoutEl = document.getElementById('settings-source-readout');
+
+    if (filtered.length === 0) {
       if (readoutEl) readoutEl.textContent = state.sourceTab === 'window' ? 'Janela específica' : 'Tela inteira';
       els.sourcesGrid.innerHTML = `
         <div class="zero-copy-info-card">
-          <strong>${modeTitle}</strong>
-          <p>Ao clicar em <strong>Compartilhar Tela</strong>, o seletor nativo da placa de vídeo abrirá para você escolher o monitor ou jogo em 60 FPS.</p>
+          <strong>${state.sourceTab === 'window' ? 'Nenhuma janela encontrada' : 'Monitor Principal (Motor GPU DXGI/NVENC)'}</strong>
+          <p>${state.sourceTab === 'window'
+            ? 'Abra o jogo ou aplicativo desejado e clique novamente na aba Janela específica.'
+            : 'Ao clicar em Compartilhar Tela, a captura nativa GPU iniciará em 60 FPS.'}</p>
         </div>
       `;
       return;
     }
 
-    const filtered = state.nativeSources.filter((s) => s.type === state.sourceTab);
-    if (filtered.length === 0) {
-      els.sourcesGrid.innerHTML = `<div class="sources-loading">Nenhuma fonte encontrada nesta aba.</div>`;
-      return;
-    }
-
-    if (!state.nativeSources.some((s) => s.id === state.selectedSourceId)) {
+    if (!filtered.some((s) => s.id === state.selectedSourceId)) {
       state.selectedSourceId = filtered[0].id;
+    }
+    const activeSrc = filtered.find((s) => s.id === state.selectedSourceId) || filtered[0];
+    if (readoutEl && activeSrc) {
+      readoutEl.textContent = activeSrc.title.length > 26 ? activeSrc.title.slice(0, 25) + '…' : activeSrc.title;
     }
 
     filtered.forEach((src) => {
-      const card = document.createElement('div');
-      card.className = `source-card ${state.selectedSourceId === src.id ? 'selected' : ''}`;
-      const thumbHtml = src.thumb
-        ? `<img class="source-thumb" src="data:image/jpeg;base64,${src.thumb}" alt="${escapeHtml(src.title)}" />`
-        : `<div class="source-thumb" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:12px;text-align:center;background:linear-gradient(135deg,#181922,#23263a);color:#dbdee1;font-size:12px;">
-             <span style="font-size:26px;">${src.type === 'window' ? '🎮' : '🖥️'}</span>
-             <span style="color:#57f287;font-weight:700;font-size:11px;">DirectX 11 Zero-Copy GPU</span>
-           </div>`;
-      card.innerHTML = `
-        ${thumbHtml}
-        <div class="source-card-title" title="${escapeHtml(src.title)}">${escapeHtml(src.title)}</div>
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `source-target-btn ${state.selectedSourceId === src.id ? 'is-selected' : ''}`;
+      const metaText = src.type === 'monitor' ? 'GPU Nativo · DXGI / NVENC' : 'Janela aberta · Áudio isolável';
+      btn.innerHTML = `
+        <span class="source-target-title" title="${escapeHtml(src.title)}">${src.type === 'window' ? '🎮 ' : '🖥️ '}${escapeHtml(src.title)}</span>
+        <span class="source-target-meta">${metaText}</span>
       `;
-      card.onclick = () => {
+      btn.onclick = () => {
         state.selectedSourceId = src.id;
         renderSourcesGrid();
       };
-      card.ondblclick = () => {
+      btn.ondblclick = () => {
         state.selectedSourceId = src.id;
         startNativeScreenShare();
       };
-      els.sourcesGrid.appendChild(card);
+      els.sourcesGrid.appendChild(btn);
     });
   }
 
@@ -1963,7 +1954,9 @@
     state.nativeGpuEncoder = status.encoder || 'h264_nvenc';
     const targetH = cfg.resolution === 'source' ? 0 : (resSpec.heightNum || 1080);
     const reqBitrate = Math.min(12000, Math.max(3000, Number(cfg.bitrateKbps) || 8000));
-    const wsUrl = `${wsProto}//${window.location.host}/ws-gpu-video?monitor=0&height=${targetH}&fps=${cfg.fps}&bitrate=${reqBitrate}`;
+    const monMatch = String(state.selectedSourceId || '').match(/^monitor:(\d+)$/);
+    const monIdx = monMatch ? Number(monMatch[1]) : 0;
+    const wsUrl = `${wsProto}//${window.location.host}/ws-gpu-video?monitor=${monIdx}&height=${targetH}&fps=${cfg.fps}&bitrate=${reqBitrate}`;
 
     return await new Promise((resolve) => {
       let settled = false;
@@ -2040,7 +2033,8 @@
       ws.videoEl.parentElement.insertBefore(canvas, ws.videoEl.nextSibling);
       ws.gpuCanvasEl = canvas;
     }
-    const ctx = canvas ? canvas.getContext('2d', { alpha: false, desynchronized: true }) : null;
+    // alpha: false sem desynchronized evita listras brancas/tearing em GPUs mobile (Android/iOS)
+    const ctx = canvas ? canvas.getContext('2d', { alpha: false }) : null;
 
     let decoder = null;
     let decoderConfigured = false;
