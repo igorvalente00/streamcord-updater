@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.16.4';
+  const APP_VERSION = '9.16.5';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -1945,8 +1945,11 @@
       return null;
     }
     if (!status || !status.ready) {
-      if (status && !status.downloading) {
+      if (status && status.downloading) {
+        showToast(`Baixando Motor Nativo GPU (${status.progress || 1}%)... usando modo padrão nesta vez.`, '⚙️');
+      } else if (status && !status.downloading) {
         fetch('/api/gpu-engine-install', { method: 'POST' }).catch(() => {});
+        showToast('Iniciando download do Motor Nativo GPU em segundo plano... usando modo padrão nesta vez.', '⚙️');
       }
       return null;
     }
