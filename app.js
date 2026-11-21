@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.16.7';
+  const APP_VERSION = '9.16.8';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -2013,7 +2013,9 @@
 
     state.nativeGpuEncoder = status.encoder || 'h264_nvenc';
     const targetH = cfg.resolution === 'source' ? 0 : (resSpec.heightNum || 1080);
-    const reqBitrate = Math.min(12000, Math.max(3000, Number(cfg.bitrateKbps) || 8000));
+    // Teto VBR econômico por resolução (em VBR -cq 26, a média real cai ~50-70% em relação ao teto!)
+    const maxVbrByRes = targetH > 0 && targetH <= 720 ? 4500 : (targetH > 0 && targetH <= 1080 ? 6500 : 9000);
+    const reqBitrate = Math.min(maxVbrByRes, Math.max(2500, Number(cfg.bitrateKbps) || 6500));
     const monMatch = String(state.selectedSourceId || '').match(/^monitor:(\d+)$/);
     const winMatch = String(state.selectedSourceId || '').match(/^window:(\d+)$/);
     const monIdx = monMatch ? Number(monMatch[1]) : 0;
