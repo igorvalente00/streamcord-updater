@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.16.2';
+  const APP_VERSION = '9.16.3';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -2048,13 +2048,14 @@
     const assemblies = new Map();
     const frameQueue = [];
     let rafId = 0;
+    let lastDrawMs = 0;
     ws.gpuFramesDecoded = 0;
     ws.gpuBytesReceived = 0;
     ws.gpuWidth = 0;
     ws.gpuHeight = 0;
     ws.gpuActive = true;
 
-    const renderLoop = () => {
+    const renderLoop = (now) => {
       if (ws.inEntry !== inEntry) {
         while (frameQueue.length > 0) {
           try { frameQueue.shift().close(); } catch (_) {}
@@ -2062,11 +2063,15 @@
         rafId = 0;
         return;
       }
-      // Mantém fila enxuta (máx 2 quadros) para absorver bursts de rede SCTP sem aumentar latência
-      while (frameQueue.length > 2) {
+      // Se acumular > 5 quadros (lag forte), reduz para 2 para manter latência baixa
+      while (frameQueue.length > 5) {
         try { frameQueue.shift().close(); } catch (_) {}
       }
-      if (frameQueue.length > 0 && canvas && ctx) {
+      // Cadenciador real de 60 FPS para monitores 144Hz/164Hz/240Hz:
+      // impede que o rAF de 164Hz esvazie 2 quadros em 6ms e deixe um buraco de 27ms (stuttering)!
+      const targetInterval = frameQueue.length >= 3 ? 13.5 : 16.3;
+      if (frameQueue.length > 0 && canvas && ctx && (lastDrawMs === 0 || (now - lastDrawMs) >= targetInterval)) {
+        lastDrawMs = now;
         const frame = frameQueue.shift();
         try {
           if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
@@ -2078,6 +2083,7 @@
             if (ws.videoEl) ws.videoEl.classList.add('hidden');
           }
           ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+          ws.gpuFramesDecoded = (ws.gpuFramesDecoded || 0) + 1;
         } finally {
           frame.close();
         }
@@ -2096,7 +2102,6 @@
             frame.close();
             return;
           }
-          ws.gpuFramesDecoded = (ws.gpuFramesDecoded || 0) + 1;
           ws.gpuWidth = frame.displayWidth;
           ws.gpuHeight = frame.displayHeight;
           if (!ws.webrtcVideoActive) {
@@ -2111,8 +2116,7 @@
               ws.natWarningTimer = null;
             }
           }
-          // Se acumular > 3 quadros decodificados antes do VSync, descarta o mais antigo sem quebrar H.264
-          while (frameQueue.length >= 3) {
+          while (frameQueue.length >= 6) {
             try { frameQueue.shift().close(); } catch (_) {}
           }
           frameQueue.push(frame);
@@ -3608,7 +3612,7 @@
     const dt = Math.max(0.5, (now - state.lastStatsTime) / 1000);
     state.lastStatsTime = now;
 
-    let outFps = Math.round(state.framesCapturedCount / dt);
+    let outFps = Math.min(state.streamSettings.fps || 60, Math.round(state.framesCapturedCount / dt));
     let outMbps = ((state.bytesTransferredThisSec * 8) / dt / 1_000_000).toFixed(1);
     state.framesCapturedCount = 0;
     state.bytesTransferredThisSec = 0;
@@ -3720,7 +3724,7 @@
     for (const ws of state.watchedStreams.values()) {
       if (ws.isMe || !ws.inEntry?.pc) continue;
       if (ws.gpuActive) {
-        const rFpsNum = Math.round((ws.gpuFramesDecoded || 0) / dt);
+        const rFpsNum = Math.min(60, Math.round((ws.gpuFramesDecoded || 0) / dt));
         const rMbpsStr = (((ws.gpuBytesReceived || 0) * 8) / dt / 1_000_000).toFixed(1);
         ws.gpuFramesDecoded = 0;
         ws.gpuBytesReceived = 0;
