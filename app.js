@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.15.6';
+  const APP_VERSION = '9.16.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -383,6 +383,12 @@
     sourceTab: 'monitor', // 'monitor' | 'window' | 'browser'
     localCaptureWs: null,
     localAudioWs: null,
+    nativeGpuWs: null,
+    nativeGpuActive: false,
+    nativeGpuEncoder: 'h264_nvenc',
+    nativeGpuWidth: 0,
+    nativeGpuHeight: 0,
+    nativeGpuLastKeyframe: null,
     audioCtx: null,
     audioDestNode: null,
     nextAudioTime: 0,
@@ -1854,6 +1860,322 @@
     return legacyStream;
   }
 
+  // =========================================================================
+  // 7B. MOTOR NATIVO GPU (DXGI ddagrab -> NVENC/AMF/QSV -> DataChannel -> WebCodecs)
+  // Zero cópia VRAM->RAM, 60 FPS cravados em 2K/1080p/720p sem queda de FPS no jogo!
+  // =========================================================================
+  const GPU_DC_MAX_CHUNK = 14336;
+  const GPU_DC_HDR_SIZE = 18;
+
+  function parseAvcCodecFromAnnexB(u8) {
+    if (!u8 || u8.length < 8) return 'avc1.640033';
+    for (let i = 0; i <= u8.length - 7; i++) {
+      let scLen = 0;
+      if (u8[i] === 0 && u8[i + 1] === 0) {
+        if (u8[i + 2] === 1) scLen = 3;
+        else if (u8[i + 2] === 0 && u8[i + 3] === 1) scLen = 4;
+      }
+      if (scLen > 0) {
+        const nalIdx = i + scLen;
+        if (nalIdx + 3 < u8.length && (u8[nalIdx] & 0x1f) === 7) {
+          const p = u8[nalIdx + 1].toString(16).padStart(2, '0');
+          const c = u8[nalIdx + 2].toString(16).padStart(2, '0');
+          const l = u8[nalIdx + 3].toString(16).padStart(2, '0');
+          return `avc1.${p}${c}${l}`;
+        }
+      }
+    }
+    return 'avc1.640033';
+  }
+
+  function sendNativeGpuFrameToChannel(dc, entry, frameInfo) {
+    if (!dc || dc.readyState !== 'open') return;
+    if (dc.bufferedAmount > 768 * 1024) {
+      entry.gpuAwaitKey = true;
+      return;
+    }
+    if (entry.gpuAwaitKey && !frameInfo.isKey) return;
+    if (frameInfo.isKey) entry.gpuAwaitKey = false;
+
+    const payload = frameInfo.payload;
+    const totalChunks = Math.max(1, Math.ceil(payload.byteLength / GPU_DC_MAX_CHUNK));
+    for (let idx = 0; idx < totalChunks; idx++) {
+      const start = idx * GPU_DC_MAX_CHUNK;
+      const end = Math.min(payload.byteLength, start + GPU_DC_MAX_CHUNK);
+      const sliceLen = end - start;
+      const pkt = new Uint8Array(GPU_DC_HDR_SIZE + sliceLen);
+      const dv = new DataView(pkt.buffer);
+      dv.setUint32(0, frameInfo.seq, true);
+      dv.setUint16(4, idx, true);
+      dv.setUint16(6, totalChunks, true);
+      dv.setUint8(8, frameInfo.isKey ? 1 : 0);
+      dv.setUint8(9, 0);
+      dv.setUint32(10, frameInfo.tsMs, true);
+      dv.setUint16(14, frameInfo.width, true);
+      dv.setUint16(16, frameInfo.height, true);
+      pkt.set(payload.subarray(start, end), GPU_DC_HDR_SIZE);
+      try {
+        dc.send(pkt);
+      } catch (_) {
+        entry.gpuAwaitKey = true;
+        break;
+      }
+    }
+  }
+
+  function broadcastNativeGpuFrame(frameInfo) {
+    if (frameInfo.isKey) {
+      state.nativeGpuLastKeyframe = frameInfo;
+    }
+    state.framesCapturedCount++;
+    state.bytesTransferredThisSec += frameInfo.payload.byteLength;
+    for (const entry of state.screenOutPcs.values()) {
+      if (entry && entry.gpuDataChannel && entry.gpuDataChannel.readyState === 'open') {
+        sendNativeGpuFrameToChannel(entry.gpuDataChannel, entry, frameInfo);
+      }
+    }
+  }
+
+  async function tryStartNativeGpuCapture(cfg, resSpec, wsProto) {
+    if (!IS_LOCAL_HOST || state.sourceTab !== 'monitor' || typeof VideoDecoder === 'undefined') {
+      return null;
+    }
+    let status = null;
+    try {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const tmr = ctrl ? setTimeout(() => ctrl.abort(), 700) : null;
+      const r = await fetch('/api/gpu-engine-status?t=' + Date.now(), {
+        cache: 'no-store',
+        signal: ctrl ? ctrl.signal : undefined,
+      });
+      if (tmr) clearTimeout(tmr);
+      if (r.ok) status = await r.json();
+    } catch (_) {
+      return null;
+    }
+    if (!status || !status.ready) {
+      if (status && !status.downloading) {
+        fetch('/api/gpu-engine-install', { method: 'POST' }).catch(() => {});
+      }
+      return null;
+    }
+
+    state.nativeGpuEncoder = status.encoder || 'h264_nvenc';
+    const targetH = cfg.resolution === 'source' ? 0 : (resSpec.heightNum || 1080);
+    const reqBitrate = Math.min(12000, Math.max(3000, Number(cfg.bitrateKbps) || 8000));
+    const wsUrl = `${wsProto}//${window.location.host}/ws-gpu-video?monitor=0&height=${targetH}&fps=${cfg.fps}&bitrate=${reqBitrate}`;
+
+    return await new Promise((resolve) => {
+      let settled = false;
+      const gpuWs = new WebSocket(wsUrl);
+      gpuWs.binaryType = 'arraybuffer';
+
+      const failTimer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          try { gpuWs.close(); } catch (_) {}
+          resolve(null);
+        }
+      }, 2400);
+
+      gpuWs.onmessage = (ev) => {
+        if (!(ev.data instanceof ArrayBuffer) || ev.data.byteLength <= 17) return;
+        const dv = new DataView(ev.data);
+        const isKey = (dv.getUint8(0) & 1) === 1;
+        const seq = dv.getUint32(1, true);
+        const tsMs = dv.getUint32(5, true);
+        const width = dv.getUint16(9, true);
+        const height = dv.getUint16(11, true);
+        const payloadLen = dv.getUint32(13, true);
+        if (17 + payloadLen > ev.data.byteLength) return;
+        const payload = new Uint8Array(ev.data, 17, payloadLen);
+
+        state.nativeGpuWidth = width;
+        state.nativeGpuHeight = height;
+        const frameInfo = { seq, tsMs, isKey, width, height, payload };
+
+        if (!settled) {
+          settled = true;
+          clearTimeout(failTimer);
+          state.nativeGpuWs = gpuWs;
+          state.nativeGpuActive = true;
+          state.nativeGpuLastKeyframe = isKey ? frameInfo : null;
+          resolve(gpuWs);
+        }
+        if (state.isStreaming && state.nativeGpuWs === gpuWs) {
+          broadcastNativeGpuFrame(frameInfo);
+        }
+      };
+
+      gpuWs.onerror = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(failTimer);
+          resolve(null);
+        }
+      };
+
+      gpuWs.onclose = () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(failTimer);
+          resolve(null);
+        } else if (state.nativeGpuWs === gpuWs && state.isStreaming) {
+          stopScreenShare(true);
+          showToast('Captura nativa GPU encerrada.', '⚠️');
+        }
+      };
+    });
+  }
+
+  function attachGpuVideoDataChannel(ws, inEntry, dc) {
+    if (!ws || !dc || typeof VideoDecoder === 'undefined') return;
+    dc.binaryType = 'arraybuffer';
+    inEntry.gpuDataChannel = dc;
+
+    let canvas = ws.gpuCanvasEl;
+    if (!canvas && ws.videoEl && ws.videoEl.parentElement) {
+      canvas = document.createElement('canvas');
+      canvas.className = 'gpu-video-canvas hidden';
+      ws.videoEl.parentElement.insertBefore(canvas, ws.videoEl.nextSibling);
+      ws.gpuCanvasEl = canvas;
+    }
+    const ctx = canvas ? canvas.getContext('2d', { alpha: false, desynchronized: true }) : null;
+
+    let decoder = null;
+    let decoderConfigured = false;
+    let awaitingKey = true;
+    const assemblies = new Map();
+    ws.gpuFramesDecoded = 0;
+    ws.gpuBytesReceived = 0;
+    ws.gpuWidth = 0;
+    ws.gpuHeight = 0;
+    ws.gpuActive = true;
+
+    const createDecoder = (codecStr) => {
+      if (decoder) {
+        try { decoder.close(); } catch (_) {}
+      }
+      decoder = new VideoDecoder({
+        output: (frame) => {
+          try {
+            if (ws.inEntry !== inEntry) {
+              frame.close();
+              return;
+            }
+            if (canvas && ctx) {
+              if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+                canvas.width = frame.displayWidth;
+                canvas.height = frame.displayHeight;
+              }
+              if (canvas.classList.contains('hidden')) {
+                canvas.classList.remove('hidden');
+                if (ws.videoEl) ws.videoEl.classList.add('hidden');
+              }
+              ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+            }
+            ws.gpuFramesDecoded = (ws.gpuFramesDecoded || 0) + 1;
+            ws.gpuWidth = frame.displayWidth;
+            ws.gpuHeight = frame.displayHeight;
+            if (!ws.webrtcVideoActive) {
+              ws.webrtcVideoActive = true;
+              setStreamCardStatus(ws, null);
+              if (ws.watchRetryTimer) {
+                clearInterval(ws.watchRetryTimer);
+                ws.watchRetryTimer = null;
+              }
+              if (ws.natWarningTimer) {
+                clearTimeout(ws.natWarningTimer);
+                ws.natWarningTimer = null;
+              }
+            }
+          } finally {
+            frame.close();
+          }
+        },
+        error: () => {
+          decoderConfigured = false;
+          awaitingKey = true;
+        },
+      });
+      decoder.configure({
+        codec: codecStr || 'avc1.640033',
+        optimizeForLatency: true,
+        hardwareAcceleration: 'prefer-hardware',
+      });
+      decoderConfigured = true;
+      inEntry.gpuDecoder = decoder;
+    };
+
+    dc.onmessage = (ev) => {
+      if (ws.inEntry !== inEntry || !(ev.data instanceof ArrayBuffer) || ev.data.byteLength <= GPU_DC_HDR_SIZE) return;
+      const dv = new DataView(ev.data);
+      const seq = dv.getUint32(0, true);
+      const chunkIdx = dv.getUint16(4, true);
+      const chunkCount = dv.getUint16(6, true);
+      const isKey = (dv.getUint8(8) & 1) === 1;
+      const tsMs = dv.getUint32(10, true);
+      const chunkData = new Uint8Array(ev.data, GPU_DC_HDR_SIZE);
+
+      let auBytes = null;
+      if (chunkCount <= 1) {
+        auBytes = chunkData;
+      } else {
+        let asm = assemblies.get(seq);
+        if (!asm) {
+          if (assemblies.size > 12) {
+            const oldestKey = assemblies.keys().next().value;
+            assemblies.delete(oldestKey);
+          }
+          asm = { count: chunkCount, received: 0, parts: new Array(chunkCount), totalLen: 0 };
+          assemblies.set(seq, asm);
+        }
+        if (!asm.parts[chunkIdx]) {
+          asm.parts[chunkIdx] = new Uint8Array(chunkData);
+          asm.received++;
+          asm.totalLen += chunkData.byteLength;
+        }
+        if (asm.received === asm.count) {
+          assemblies.delete(seq);
+          auBytes = new Uint8Array(asm.totalLen);
+          let off = 0;
+          for (let i = 0; i < asm.count; i++) {
+            auBytes.set(asm.parts[i], off);
+            off += asm.parts[i].byteLength;
+          }
+        }
+      }
+
+      if (!auBytes) return;
+      ws.gpuBytesReceived = (ws.gpuBytesReceived || 0) + auBytes.byteLength;
+
+      if (awaitingKey && !isKey) return;
+      if (!decoderConfigured) {
+        if (!isKey) return;
+        try {
+          createDecoder(parseAvcCodecFromAnnexB(auBytes));
+        } catch (_) {
+          return;
+        }
+      }
+
+      try {
+        if (decoder && decoder.state === 'configured') {
+          if (decoder.decodeQueueSize > 4 && !isKey) return;
+          if (isKey) awaitingKey = false;
+          decoder.decode(new EncodedVideoChunk({
+            type: isKey ? 'key' : 'delta',
+            timestamp: tsMs * 1000,
+            data: auBytes,
+          }));
+        }
+      } catch (_) {
+        decoderConfigured = false;
+        awaitingKey = true;
+      }
+    };
+  }
+
   async function startNativeScreenShare() {
     void ensureTurnQuotaChecked();
     if (turnQuotaState.locked) {
@@ -1895,38 +2217,44 @@
         return;
       }
     } else if (cfg.captureEngine !== 'legacy_csharp') {
-      // Chamada imediata dentro do clique para preservar o gesto do usuário no WebView2 (GPU Zero-Copy DXGI/WGC)!
-      const gpuRes = await acquireZeroCopyGpuStream(cfg, resSpec, false);
-      if (gpuRes.cancelled) {
-        showToast('Seleção de tela cancelada.', '⚠️');
-        return;
-      }
+      // 1. Tenta Motor Nativo GPU 100% Zero-Copy (DXGI ddagrab -> NVENC/AMF/QSV direto na VRAM, 60 FPS cravados em 2K!)
+      const nativeGpuWs = await tryStartNativeGpuCapture(cfg, resSpec, wsProto);
+      if (nativeGpuWs) {
+        const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto, 'monitor:0');
+        state.localScreenStream = new MediaStream(sysAudioTrack ? [sysAudioTrack] : []);
+      } else {
+        // 2. Fallback automático: Seletor Nativo Chromium getDisplayMedia (janelas específicas ou GPU ainda baixando)
+        const gpuRes = await acquireZeroCopyGpuStream(cfg, resSpec, false);
+        if (gpuRes.cancelled) {
+          showToast('Seleção de tela cancelada.', '⚠️');
+          return;
+        }
 
-      if (gpuRes.stream) {
-        const dxgiStream = gpuRes.stream;
-        const vTrack = dxgiStream.getVideoTracks()[0];
-        let audioSourceArg = state.selectedSourceId;
-        if (vTrack) {
-          try { vTrack.contentHint = cfg.preset === 'detail' ? 'detail' : 'motion'; } catch (e) {}
-          vTrack.onended = () => stopScreenShare(true);
-          if (cfg.audioMode === 'window_only' && vTrack.label) {
-            const hwndMatch = vTrack.label.match(/^window:(\d+)/i);
-            if (hwndMatch) {
-              audioSourceArg = `window:${hwndMatch[1]}`;
-            } else if (!vTrack.label.startsWith('screen:')) {
-              audioSourceArg = `wtitle:${vTrack.label}`;
+        if (gpuRes.stream) {
+          const dxgiStream = gpuRes.stream;
+          const vTrack = dxgiStream.getVideoTracks()[0];
+          let audioSourceArg = state.selectedSourceId;
+          if (vTrack) {
+            try { vTrack.contentHint = cfg.preset === 'detail' ? 'detail' : 'motion'; } catch (e) {}
+            vTrack.onended = () => stopScreenShare(true);
+            if (cfg.audioMode === 'window_only' && vTrack.label) {
+              const hwndMatch = vTrack.label.match(/^window:(\d+)/i);
+              if (hwndMatch) {
+                audioSourceArg = `window:${hwndMatch[1]}`;
+              } else if (!vTrack.label.startsWith('screen:')) {
+                audioSourceArg = `wtitle:${vTrack.label}`;
+              }
             }
           }
+          const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto, audioSourceArg);
+          if (sysAudioTrack) {
+            dxgiStream.addTrack(sysAudioTrack);
+          }
+          state.localScreenStream = dxgiStream;
+        } else {
+          state.localScreenStream = await startLegacyCsharpCapture(cfg, resSpec, wsProto);
+          showToast('Motor GPU indisponível neste dispositivo; usando modo compatibilidade C#.', 'ℹ️');
         }
-        const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto, audioSourceArg);
-        if (sysAudioTrack) {
-          dxgiStream.addTrack(sysAudioTrack);
-        }
-        state.localScreenStream = dxgiStream;
-      } else {
-        // Fallback automático caso o ambiente WebView2 não consiga abrir o seletor GPU
-        state.localScreenStream = await startLegacyCsharpCapture(cfg, resSpec, wsProto);
-        showToast('Motor GPU indisponível neste dispositivo; usando modo compatibilidade C#.', 'ℹ️');
       }
     } else {
       state.localScreenStream = await startLegacyCsharpCapture(cfg, resSpec, wsProto);
@@ -1983,6 +2311,14 @@
       try { state.localCaptureWs.close(); } catch (e) {}
       state.localCaptureWs = null;
     }
+    if (state.nativeGpuWs) {
+      try { state.nativeGpuWs.close(); } catch (e) {}
+      state.nativeGpuWs = null;
+    }
+    state.nativeGpuActive = false;
+    state.nativeGpuLastKeyframe = null;
+    state.nativeGpuWidth = 0;
+    state.nativeGpuHeight = 0;
     if (state.localAudioWs) {
       try { state.localAudioWs.close(); } catch (e) {}
       state.localAudioWs = null;
@@ -2279,7 +2615,7 @@
     if (!viewerInChannel) return;
 
     const liveVideoTracks = state.localScreenStream.getVideoTracks().filter((t) => t.readyState === 'live');
-    if (liveVideoTracks.length === 0) {
+    if (!state.nativeGpuActive && liveVideoTracks.length === 0) {
       publishDirect(viewerId, { type: 'stream-error', reason: 'A captura de vídeo foi encerrada pelo sistema.' });
       stopScreenShare(true);
       return;
@@ -2393,7 +2729,7 @@
         // Detecta imediatamente se a conexão fechou em P2P ou TURN (UDP/TCP) e aplica o teto ótimo
         setTimeout(() => { if (isCurrent()) void detectOutgoingRoute(outEntry); }, 900);
         setTimeout(() => { if (isCurrent()) void detectOutgoingRoute(outEntry); }, 2500);
-        if (!forceAlt && !outEntry.watchdogTimer) {
+        if (!state.nativeGpuActive && !forceAlt && !outEntry.watchdogTimer) {
           outEntry.watchdogTimer = setTimeout(async () => {
             if (!isCurrent() || !state.isStreaming) return;
             try {
@@ -2426,6 +2762,17 @@
     };
 
     try {
+      if (state.nativeGpuActive) {
+        const gpuDc = pc.createDataChannel('gpu-h264', { ordered: true });
+        gpuDc.binaryType = 'arraybuffer';
+        outEntry.gpuDataChannel = gpuDc;
+        outEntry.gpuAwaitKey = true;
+        gpuDc.onopen = () => {
+          if (isCurrent() && state.nativeGpuLastKeyframe) {
+            sendNativeGpuFrameToChannel(gpuDc, outEntry, state.nativeGpuLastKeyframe);
+          }
+        };
+      }
       for (const track of stream.getTracks()) {
         if (track.kind === 'video') {
           try {
@@ -2864,6 +3211,9 @@
     }
     if (ws.watchRetryTimer) clearInterval(ws.watchRetryTimer);
     if (ws.natWarningTimer) clearTimeout(ws.natWarningTimer);
+    if (ws.inEntry && ws.inEntry.gpuDecoder) {
+      try { ws.inEntry.gpuDecoder.close(); } catch (e) {}
+    }
     if (ws.inEntry && ws.inEntry.pc) {
       try { ws.inEntry.pc.close(); } catch (e) {}
     }
@@ -2926,6 +3276,9 @@
 
     if (ws.inEntry) {
       if (ws.inEntry.relayFlushTimer) clearTimeout(ws.inEntry.relayFlushTimer);
+      if (ws.inEntry.gpuDecoder) {
+        try { ws.inEntry.gpuDecoder.close(); } catch (e) {}
+      }
       if (ws.inEntry.pc) {
         try { ws.inEntry.pc.close(); } catch (e) {}
       }
@@ -3035,6 +3388,13 @@
         return;
       }
       sendOrQueueViewerIce(candidate);
+    };
+
+    pc.ondatachannel = (ev) => {
+      if (ws.inEntry !== inEntry || !state.watchedStreams.has(streamerId)) return;
+      if (ev.channel && ev.channel.label === 'gpu-h264') {
+        attachGpuVideoDataChannel(ws, inEntry, ev.channel);
+      }
     };
 
     pc.ontrack = (ev) => {
@@ -3230,11 +3590,23 @@
     let outRes = `${targetResSpec.width}×${targetResSpec.height}`;
 
     if (state.isStreaming && state.localScreenStream) {
-      const vt = state.localScreenStream.getVideoTracks()[0];
-      if (vt && vt.getSettings) {
-        const s = vt.getSettings();
-        if (s.width && s.height) outRes = `${s.width}×${s.height}`;
-        if (!state.localCaptureWs) outFps = null;
+      if (state.nativeGpuActive) {
+        if (state.nativeGpuWidth && state.nativeGpuHeight) {
+          outRes = `${state.nativeGpuWidth}×${state.nativeGpuHeight}`;
+        }
+        if (els.statCodec) {
+          const encLabel = state.nativeGpuEncoder === 'h264_amf' ? 'AMF' : (state.nativeGpuEncoder === 'h264_qsv' ? 'QSV' : 'NVENC');
+          const anyRelay = [...state.screenOutPcs.values()].some((e) => e && e.isRelayed);
+          const routeLabel = state.screenOutPcs.size === 0 ? ' • DXGI' : (anyRelay ? ' • TURN' : ' • P2P');
+          els.statCodec.textContent = `H264 ${encLabel} (GPU)${routeLabel}`;
+        }
+      } else {
+        const vt = state.localScreenStream.getVideoTracks()[0];
+        if (vt && vt.getSettings) {
+          const s = vt.getSettings();
+          if (s.width && s.height) outRes = `${s.width}×${s.height}`;
+          if (!state.localCaptureWs) outFps = null;
+        }
       }
 
       let activeOut = null;
@@ -3320,6 +3692,25 @@
     let firstRemoteStats = null;
     for (const ws of state.watchedStreams.values()) {
       if (ws.isMe || !ws.inEntry?.pc) continue;
+      if (ws.gpuActive) {
+        const rFpsNum = Math.round((ws.gpuFramesDecoded || 0) / dt);
+        const rMbpsStr = (((ws.gpuBytesReceived || 0) * 8) / dt / 1_000_000).toFixed(1);
+        ws.gpuFramesDecoded = 0;
+        ws.gpuBytesReceived = 0;
+        const rRes = (ws.gpuWidth && ws.gpuHeight) ? `${ws.gpuWidth}×${ws.gpuHeight}` : ws.resBadgeEl.textContent;
+        ws.resBadgeEl.textContent = rRes;
+        ws.fpsBadgeEl.textContent = `${rFpsNum} FPS`;
+        ws.mbpsBadgeEl.textContent = `${rMbpsStr} Mbps`;
+        if (!firstRemoteStats) {
+          firstRemoteStats = {
+            res: rRes,
+            fps: `${rFpsNum} FPS`,
+            mbps: `${rMbpsStr} Mbps`,
+            codec: 'H264 GPU (DXGI)',
+          };
+        }
+        continue;
+      }
       try {
         const pc = ws.inEntry.pc;
         const stats = await pc.getStats();

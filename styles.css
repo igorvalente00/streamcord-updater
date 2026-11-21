@@ -3037,3 +3037,11 @@ input:focus-visible,
     display: none;
   }
 }
+
+.gpu-video-canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #000;
+}
