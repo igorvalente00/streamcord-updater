@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.16.6';
+  const APP_VERSION = '9.16.7';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -1035,8 +1035,10 @@
       id: state.clientId,
       username: state.username,
       avatarColor: state.avatarColor,
+      avatarUrl: state.avatarUrl || '',
       channelId: state.currentChannelId,
       streaming: state.isStreaming,
+      watchingIds: [...state.watchedStreams.keys()].filter((id) => id !== state.clientId),
       streamConfig: state.isStreaming
         ? {
             resolution: RESOLUTION_MAP[state.streamSettings.resolution]?.label || '1080p',
@@ -1046,6 +1048,59 @@
         : null,
       lastSeen: Date.now(),
     };
+  }
+
+  function getStreamViewers(streamerId) {
+    const map = new Map();
+    for (const u of state.onlineUsers.values()) {
+      if (!u || u.id === streamerId) continue;
+      if (Array.isArray(u.watchingIds) && u.watchingIds.includes(streamerId)) {
+        map.set(u.id, u);
+      }
+    }
+    if (streamerId === state.clientId) {
+      for (const vid of state.screenOutPcs.keys()) {
+        if (vid === state.clientId || map.has(vid)) continue;
+        const u = state.onlineUsers.get(vid);
+        map.set(vid, u || { id: vid, username: 'Amigo', avatarColor: '#5865F2' });
+      }
+    }
+    return [...map.values()];
+  }
+
+  function renderViewerAvatarsHtml(viewers) {
+    if (!viewers || viewers.length === 0) return '';
+    const maxShow = 5;
+    const shown = viewers.slice(0, maxShow);
+    const extra = viewers.length - shown.length;
+    const dots = shown.map((v) => {
+      const name = v.username || 'Amigo';
+      const initial = getUserInitials(name);
+      const color = v.avatarColor || '#5865F2';
+      if (v.avatarUrl) {
+        return `<span class="viewer-avatar-dot" title="${escapeHtml(name)} está assistindo"><img src="${escapeHtml(v.avatarUrl)}" alt="${escapeHtml(name)}" /></span>`;
+      }
+      return `<span class="viewer-avatar-dot" style="background:${escapeHtml(color)};" title="${escapeHtml(name)} está assistindo">${escapeHtml(initial)}</span>`;
+    }).join('');
+    const more = extra > 0 ? `<span class="viewer-avatar-dot viewer-avatar-more" title="+${extra} assistindo">+${extra}</span>` : '';
+    return dots + more;
+  }
+
+  function refreshStreamViewerBadges() {
+    for (const [sid, ws] of state.watchedStreams.entries()) {
+      if (!ws || !ws.cardEl) continue;
+      const viewers = getStreamViewers(sid);
+      const html = renderViewerAvatarsHtml(viewers);
+      const namesList = viewers.map((v) => v.username || 'Amigo').join(', ');
+      const stacks = ws.cardEl.querySelectorAll('.card-viewers-stack');
+      stacks.forEach((el) => {
+        el.innerHTML = html;
+        el.classList.toggle('hidden', viewers.length === 0);
+        if (viewers.length > 0) {
+          el.title = `Assistindo agora (${viewers.length}): ${namesList}`;
+        }
+      });
+    }
   }
 
   function connectCloudSignaling() {
@@ -1124,6 +1179,7 @@
     });
     renderChannelsSidebar();
     renderStageParticipants();
+    refreshStreamViewerBadges();
   }
 
   window.addEventListener('beforeunload', () => {
@@ -1145,6 +1201,7 @@
     }
     renderChannelsSidebar();
     renderStageParticipants();
+    refreshStreamViewerBadges();
   }, 3500);
 
   async function handleCloudMessage(msg) {
@@ -2945,6 +3002,7 @@
           <div class="saver-badge">MODO ALTA PERFORMANCE ATIVO (60 FPS)</div>
           <h3>Você está transmitindo sua tela com áudio</h3>
           <p>Para não consumir sua GPU nem derrubar o FPS do seu jogo, a prévia da sua própria tela fica oculta por padrão.</p>
+          <div class="stream-viewers-stack saver-viewers-stack card-viewers-stack hidden"></div>
           <button type="button" class="btn btn-primary btn-card-show-preview">Mostrar Minha Prévia</button>
         </div>
       </div>
@@ -2955,6 +3013,7 @@
           <span class="stream-res-text mono card-res-badge">1080p</span>
         </div>
         <div class="stream-telemetry-strip">
+          <div class="stream-viewers-stack card-viewers-stack hidden"></div>
           <span class="badge-live">AO VIVO</span>
           <span class="badge-transport mono card-route-badge" title="Rota da Conexão">P2P</span>
           <span class="stream-metrics-text mono">
@@ -3142,9 +3201,11 @@
     if (!ws) {
       ws = createStreamViewportCard(streamerId);
       state.watchedStreams.set(streamerId, ws);
+      if (streamerId !== state.clientId) announcePresence(false);
     }
     refreshMultiStreamLayout();
     renderStageParticipants();
+    refreshStreamViewerBadges();
     return ws;
   }
 
@@ -3258,6 +3319,8 @@
     updateGlobalUnmuteBanner();
     refreshMultiStreamLayout();
     renderStageParticipants();
+    refreshStreamViewerBadges();
+    if (streamerId !== state.clientId) announcePresence(false);
   }
 
   function closeAllWatchedStreams() {
@@ -3855,9 +3918,11 @@
       state.bannedFromRooms.has(state.roomCode) ? 'BANNED' : 'OK',
       chSig,
       [...state.locallyMutedUsers].join(','),
+      [...state.screenOutPcs.keys()].join(','),
     ];
     for (const u of state.onlineUsers.values()) {
-      parts.push(`${u.id}:${u.username}:${u.avatarColor}:${u.channelId}:${u.streaming ? 1 : 0}:${u.streamConfig?.resolution || ''}`);
+      const wSig = Array.isArray(u.watchingIds) ? u.watchingIds.join('+') : '';
+      parts.push(`${u.id}:${u.username}:${u.avatarColor}:${u.channelId}:${u.streaming ? 1 : 0}:${u.streamConfig?.resolution || ''}:${wSig}`);
     }
     return parts.join('|');
   }
@@ -3997,7 +4062,11 @@
       if (u.streaming) {
         const specText = u.streamConfig ? `${u.streamConfig.resolution} ${u.streamConfig.fps}FPS` : '1080p 60FPS';
         const ctaText = isWatched ? `Assistindo ✓ • ${specText}` : `Assistir • ${specText}`;
-        badgeHtml = `<div class="tile-live-corner">AO VIVO</div><div class="watch-stream-cta">${ctaText}</div>`;
+        const viewers = getStreamViewers(u.id);
+        const viewersHtml = viewers.length > 0
+          ? `<div class="stream-viewers-stack tile-viewers-stack" title="Assistindo (${viewers.length}): ${escapeHtml(viewers.map((v) => v.username || 'Amigo').join(', '))}">${renderViewerAvatarsHtml(viewers)}</div>`
+          : '';
+        badgeHtml = `<div class="tile-live-corner">AO VIVO</div>${viewersHtml}<div class="watch-stream-cta">${ctaText}</div>`;
       }
 
       tile.innerHTML = `

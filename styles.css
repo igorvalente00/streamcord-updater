@@ -3048,3 +3048,58 @@ input:focus-visible,
   display: block;
   background: #000;
 }
+
+/* Bolinhas de perfil de quem está assistindo a stream (estilo Discord) */
+.stream-viewers-stack {
+  display: inline-flex;
+  align-items: center;
+  flex-direction: row;
+  padding-left: 6px;
+}
+.viewer-avatar-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #0b0d13;
+  border: 2px solid var(--bg-base, #0c0e13);
+  margin-left: -6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: transform 0.15s ease;
+}
+.viewer-avatar-dot:hover {
+  transform: translateY(-2px) scale(1.1);
+  z-index: 2;
+}
+.viewer-avatar-dot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.viewer-avatar-more {
+  background: var(--surface-elevated, #232733);
+  color: var(--text-primary, #f3f4f6);
+  font-size: 9px;
+}
+.tile-viewers-stack {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+}
+.saver-viewers-stack {
+  margin: 4px 0 12px;
+  justify-content: center;
+}
+.saver-viewers-stack .viewer-avatar-dot {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
