@@ -1,4 +1,4 @@
-const CACHE_NAME = 'streamcord-v9.16.5';
+const CACHE_NAME = 'streamcord-v9.16.6';
 
 self.addEventListener('install', () => {
   self.skipWaiting();

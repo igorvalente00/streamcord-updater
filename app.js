@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.16.5';
+  const APP_VERSION = '9.16.6';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -1928,7 +1928,7 @@
   }
 
   async function tryStartNativeGpuCapture(cfg, resSpec, wsProto) {
-    if (!IS_LOCAL_HOST || state.sourceTab !== 'monitor' || typeof VideoDecoder === 'undefined') {
+    if (!IS_LOCAL_HOST || (state.sourceTab !== 'monitor' && state.sourceTab !== 'window') || typeof VideoDecoder === 'undefined') {
       return null;
     }
     let status = null;
@@ -1958,8 +1958,10 @@
     const targetH = cfg.resolution === 'source' ? 0 : (resSpec.heightNum || 1080);
     const reqBitrate = Math.min(12000, Math.max(3000, Number(cfg.bitrateKbps) || 8000));
     const monMatch = String(state.selectedSourceId || '').match(/^monitor:(\d+)$/);
+    const winMatch = String(state.selectedSourceId || '').match(/^window:(\d+)$/);
     const monIdx = monMatch ? Number(monMatch[1]) : 0;
-    const wsUrl = `${wsProto}//${window.location.host}/ws-gpu-video?monitor=${monIdx}&height=${targetH}&fps=${cfg.fps}&bitrate=${reqBitrate}`;
+    const hwndParam = (state.sourceTab === 'window' && winMatch) ? `&hwnd=${winMatch[1]}` : '';
+    const wsUrl = `${wsProto}//${window.location.host}/ws-gpu-video?monitor=${monIdx}${hwndParam}&height=${targetH}&fps=${cfg.fps}&bitrate=${reqBitrate}`;
 
     return await new Promise((resolve) => {
       let settled = false;
@@ -2245,13 +2247,13 @@
         return;
       }
     } else if (cfg.captureEngine !== 'legacy_csharp') {
-      // 1. Tenta Motor Nativo GPU 100% Zero-Copy (DXGI ddagrab -> NVENC/AMF/QSV direto na VRAM, 60 FPS cravados em 2K!)
+      // 1. Tenta Motor Nativo GPU 100% Zero-Copy (DXGI ddagrab -> NVENC/AMF/QSV direto na VRAM, sem barrinha do Chromium!)
       const nativeGpuWs = await tryStartNativeGpuCapture(cfg, resSpec, wsProto);
       if (nativeGpuWs) {
-        const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto, 'monitor:0');
+        const sysAudioTrack = await startSystemAudioCaptureWithoutDiscord(wsProto, state.selectedSourceId || 'monitor:0');
         state.localScreenStream = new MediaStream(sysAudioTrack ? [sysAudioTrack] : []);
       } else {
-        // 2. Fallback automático: Seletor Nativo Chromium getDisplayMedia (janelas específicas ou GPU ainda baixando)
+        // 2. Fallback automático: Seletor Nativo Chromium getDisplayMedia (oculta automaticamente a barrinha do Chromium!)
         const gpuRes = await acquireZeroCopyGpuStream(cfg, resSpec, false);
         if (gpuRes.cancelled) {
           showToast('Seleção de tela cancelada.', '⚠️');
@@ -2259,6 +2261,9 @@
         }
 
         if (gpuRes.stream) {
+          if (IS_LOCAL_HOST) {
+            [150, 450, 1100].forEach((ms) => setTimeout(() => fetch('/api/hide-share-bar', { cache: 'no-store' }).catch(() => {}), ms));
+          }
           const dxgiStream = gpuRes.stream;
           const vTrack = dxgiStream.getVideoTracks()[0];
           let audioSourceArg = state.selectedSourceId;
