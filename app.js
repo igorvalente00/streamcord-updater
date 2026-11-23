@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.17.0';
+  const APP_VERSION = '9.17.1';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -5995,6 +5995,40 @@
     });
   }
 
+  function showAdminConfirm(title, message, okText = 'Confirmar', isDanger = false) {
+    return new Promise((resolve) => {
+      const modal = document.getElementById('admin-confirm-modal');
+      const titleEl = document.getElementById('admin-confirm-title');
+      const msgEl = document.getElementById('admin-confirm-msg');
+      const btnOk = document.getElementById('btn-admin-confirm-ok');
+      const btnCancel = document.getElementById('btn-admin-confirm-cancel');
+      const btnClose = document.getElementById('btn-close-admin-confirm');
+
+      if (!modal || !btnOk || !btnCancel) {
+        resolve(window.confirm(`${title}\n\n${message}`));
+        return;
+      }
+
+      if (titleEl) titleEl.textContent = title || 'Confirmar Ação';
+      if (msgEl) msgEl.textContent = message || 'Tem certeza que deseja prosseguir?';
+      btnOk.textContent = okText;
+      btnOk.className = isDanger ? 'btn btn-danger' : 'btn btn-primary';
+
+      const cleanup = (result) => {
+        modal.classList.add('hidden');
+        btnOk.onclick = null;
+        btnCancel.onclick = null;
+        if (btnClose) btnClose.onclick = null;
+        resolve(result);
+      };
+
+      btnOk.onclick = () => cleanup(true);
+      btnCancel.onclick = () => cleanup(false);
+      if (btnClose) btnClose.onclick = () => cleanup(false);
+      modal.classList.remove('hidden');
+    });
+  }
+
   function renderAdminUsersList() {
     const listEl = document.getElementById('admin-users-list');
     if (!listEl) return;
@@ -6004,6 +6038,7 @@
       row.className = 'cm-item';
       const isPro = u.plan === 'pro';
       const isAdmin = u.role === 'admin';
+      const isMe = state.authUser && (state.authUser.id === u.id || state.authUser.username === u.username);
       row.innerHTML = `
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span class="viewer-avatar-dot" style="margin:0;background:${escapeHtml(u.avatarColor || '#5865F2')};">${
@@ -6022,13 +6057,47 @@
         </div>
       `;
       row.querySelector('[data-act="plan"]').onclick = async () => {
-        await updateAdminDbUser({ id: u.id, plan: isPro ? 'free' : 'pro' });
+        const confirmed = await showAdminConfirm(
+          'Alterar Plano do Usuário',
+          `Deseja realmente alterar o plano de @${u.username} para ${isPro ? 'FREE' : 'PRO'}?`,
+          isPro ? 'Alterar para FREE' : 'Ativar PRO',
+          false
+        );
+        if (confirmed) {
+          await updateAdminDbUser({ id: u.id, plan: isPro ? 'free' : 'pro' });
+        }
       };
       row.querySelector('[data-act="role"]').onclick = async () => {
+        if (isMe && isAdmin) {
+          const confirmedSelf = await showAdminConfirm(
+            '⚠️ Atenção: Remover Seu Próprio Admin',
+            `Você está prestes a remover o cargo de Administrador de você mesmo (@${u.username})! Você perderá acesso a este painel. Deseja continuar?`,
+            'Sim, remover meu Admin',
+            true
+          );
+          if (!confirmedSelf) return;
+        } else {
+          const confirmed = await showAdminConfirm(
+            isAdmin ? 'Remover Cargo de Admin' : 'Conceder Cargo de Admin',
+            `Deseja realmente ${isAdmin ? 'remover o cargo de Admin de' : 'tornar'} @${u.username} ${isAdmin ? '' : 'um Administrador'}?`,
+            isAdmin ? 'Remover Admin' : 'Tornar Admin',
+            isAdmin
+          );
+          if (!confirmed) return;
+        }
         await updateAdminDbUser({ id: u.id, role: isAdmin ? 'user' : 'admin' });
       };
       row.querySelector('[data-act="ban"]').onclick = async () => {
-        await updateAdminDbUser({ id: u.id, isBanned: !u.isBanned });
+        const actionLabel = u.isBanned ? 'Desbanir' : 'Banir';
+        const confirmed = await showAdminConfirm(
+          `${actionLabel} Usuário`,
+          `Deseja realmente ${actionLabel.toLowerCase()} o usuário @${u.username}?`,
+          actionLabel,
+          !u.isBanned
+        );
+        if (confirmed) {
+          await updateAdminDbUser({ id: u.id, isBanned: !u.isBanned });
+        }
       };
       listEl.appendChild(row);
     });
