@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.16.9';
+  const APP_VERSION = '9.16.10';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -418,6 +418,7 @@
     watchedStreams: new Map(),
     focusedStreamerId: null,
     earlyIceBySession: new Map(),
+    knownStreamViewers: new Map(),
     activeFallbackViewers: new Set(),
     fallbackSenderTimer: null,
 
@@ -478,6 +479,12 @@
       } else if (type === 'stream-stop') {
         playTone(659.25, 0, 0.08, 0.05);
         playTone(440, 0.08, 0.15, 0.05);
+      } else if (type === 'viewer-join') {
+        playTone(587.33, 0, 0.075, 0.05, 'sine');
+        playTone(880, 0.065, 0.13, 0.055, 'sine');
+      } else if (type === 'viewer-leave') {
+        playTone(523.25, 0, 0.075, 0.045, 'sine');
+        playTone(392, 0.07, 0.13, 0.045, 'sine');
       } else if (type === 'message') {
         playTone(740, 0, 0.06, 0.04);
         playTone(880, 0.05, 0.08, 0.04);
@@ -1109,6 +1116,42 @@
     return dots + more;
   }
 
+  function syncMyStreamViewerAlerts() {
+    if (!state.isStreaming) {
+      state.knownStreamViewers.clear();
+      return;
+    }
+    const currentViewers = getStreamViewers(state.clientId);
+    const currentMap = new Map();
+    for (const v of currentViewers) {
+      if (v && v.id && v.id !== state.clientId) {
+        currentMap.set(v.id, v.username || 'Amigo');
+      }
+    }
+
+    let anyJoined = false;
+    let anyLeft = false;
+    for (const [vid, name] of currentMap.entries()) {
+      if (!state.knownStreamViewers.has(vid)) {
+        state.knownStreamViewers.set(vid, name);
+        anyJoined = true;
+        showToast(`${name} entrou na sua stream`, '👁️');
+      } else {
+        state.knownStreamViewers.set(vid, name);
+      }
+    }
+    for (const [vid, prevName] of [...state.knownStreamViewers.entries()]) {
+      if (!currentMap.has(vid)) {
+        state.knownStreamViewers.delete(vid);
+        anyLeft = true;
+        showToast(`${prevName} saiu da sua stream`, '👋');
+      }
+    }
+
+    if (anyJoined) playDiscordSound('viewer-join');
+    else if (anyLeft) playDiscordSound('viewer-leave');
+  }
+
   function refreshStreamViewerBadges() {
     for (const [sid, ws] of state.watchedStreams.entries()) {
       if (!ws || !ws.cardEl) continue;
@@ -1124,6 +1167,7 @@
         }
       });
     }
+    syncMyStreamViewerAlerts();
   }
 
   function connectCloudSignaling() {
@@ -1180,7 +1224,7 @@
     }
   }
 
-  function closeScreenOutPc(viewerId) {
+  function closeScreenOutPc(viewerId, isReplacing = false) {
     const entry = state.screenOutPcs.get(viewerId);
     if (entry) {
       state.screenOutPcs.delete(viewerId);
@@ -1191,6 +1235,7 @@
       rebalanceViewerBitrates();
     }
     state.activeFallbackViewers.delete(viewerId);
+    if (!isReplacing) refreshStreamViewerBadges();
   }
 
   function announcePresence(requestReplies = false) {
@@ -1280,6 +1325,7 @@
 
         renderChannelsSidebar();
         renderStageParticipants();
+        refreshStreamViewerBadges();
         break;
       }
 
@@ -1296,6 +1342,7 @@
         if (!msg.retry || !entry || msg.force || (!connected && Date.now() - entry.createdAt >= 6000)) {
           publishDirect(msg.senderId, { type: 'watch-ack', channelId: state.currentChannelId });
           await startScreenOutPcForViewer(msg.senderId, Boolean(msg.force), false, msg.channelId || null);
+          refreshStreamViewerBadges();
         }
         break;
       }
@@ -2555,6 +2602,7 @@
       try { entry.pc.close(); } catch (e) {}
     }
     state.screenOutPcs.clear();
+    state.knownStreamViewers.clear();
 
     if (state.watchedStreams.has(state.clientId)) {
       closeWatchedStream(state.clientId, false);
@@ -2854,7 +2902,7 @@
       }
     }
 
-    if (existing) closeScreenOutPc(viewerId);
+    if (existing) closeScreenOutPc(viewerId, true);
     if (allowTurn) {
       await ensureIceServersReady();
     }
