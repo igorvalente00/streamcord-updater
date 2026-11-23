@@ -1,6 +1,6 @@
 // StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
 (() => {
-  const APP_VERSION = '9.16.10';
+  const APP_VERSION = '9.17.0';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -361,6 +361,23 @@
     clientId: savedClientId,
     username: savedUsername,
     avatarColor: localStorage.getItem('streamcord_color') || COLORS[Math.floor(Math.random() * COLORS.length)],
+    avatarUrl: localStorage.getItem('streamcord_avatar_url') || '',
+    authToken: localStorage.getItem('streamcord_auth_token') || '',
+    authUser: null,
+    authRole: 'user',
+    authPlan: 'free',
+    globalSettings: {
+      announcement: '',
+      freeMaxRes: '1080',
+      freeTurnMaxRes: '720',
+      freeTurnMaxFps: 60,
+      proMaxRes: '1440',
+    },
+    mockData: {
+      enabled: false,
+      mockViewers: [],
+      mockUsers: [],
+    },
     roomCode: (localStorage.getItem('streamcord_room') || 'IGOR-2K60').toUpperCase().trim(),
     activeTheme: localStorage.getItem('streamcord_theme') || 'nitro-ultra',
     sfxEnabled: localStorage.getItem('streamcord_sfx') !== '0',
@@ -1093,6 +1110,11 @@
         if (vid === state.clientId || map.has(vid)) continue;
         const u = state.onlineUsers.get(vid);
         map.set(vid, u || { id: vid, username: 'Amigo', avatarColor: '#5865F2' });
+      }
+      if (state.mockData && Array.isArray(state.mockData.mockViewers)) {
+        for (const mv of state.mockData.mockViewers) {
+          if (mv && mv.id) map.set(mv.id, mv);
+        }
       }
     }
     return [...map.values()];
@@ -4167,9 +4189,12 @@
         const li = document.createElement('li');
         li.className = 'member-row';
         const roleLabel = u.streaming ? 'Transmitindo' : isSelf ? 'Você' : 'Online';
+        const avInner = u.avatarUrl
+          ? `<img src="${escapeHtml(u.avatarUrl)}" alt="${escapeHtml(u.username)}" />`
+          : escapeHtml(getUserInitials(u.username));
         li.innerHTML = `
           <div class="member-left">
-            <span class="avatar${isSelf ? ' is-self' : ''}">${escapeHtml(getUserInitials(u.username))}</span>
+            <span class="avatar${isSelf ? ' is-self' : ''}" style="${u.avatarUrl ? '' : `background:${escapeHtml(u.avatarColor || '#5865F2')};`}">${avInner}</span>
             <span class="member-name">${escapeHtml(u.username)}</span>
           </div>
           <span class="member-role"${u.streaming ? ' style="color:var(--status-live);font-weight:600;"' : ''}>${roleLabel}</span>
@@ -4248,8 +4273,12 @@
         badgeHtml = `<div class="tile-live-corner">AO VIVO</div>${viewersHtml}<div class="watch-stream-cta">${ctaText}</div>`;
       }
 
+      const tileAvInner = u.avatarUrl
+        ? `<img src="${escapeHtml(u.avatarUrl)}" alt="${escapeHtml(u.username)}" />`
+        : initial;
+
       tile.innerHTML = `
-        <div class="tile-avatar" style="background:${u.avatarColor}">${initial}</div>
+        <div class="tile-avatar" style="background:${u.avatarColor || '#5865F2'}">${tileAvInner}</div>
         ${badgeHtml}
         <div class="tile-name-bar">
           <span class="tile-name-pill">${escapeHtml(u.username)} ${isMe ? '(Você)' : ''}</span>
@@ -4268,12 +4297,27 @@
     });
   }
 
+  function renderAvatarElement(el, name, color, avatarUrl) {
+    if (!el) return;
+    const initials = getUserInitials(name);
+    if (avatarUrl) {
+      el.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(name)}" />`;
+      el.style.background = 'transparent';
+    } else {
+      el.textContent = initials;
+      if (color) el.style.background = color;
+    }
+  }
+
   function updateLocalProfileUI() {
     const initials = getUserInitials(state.username);
     els.localUsername.textContent = state.username;
-    els.localAvatar.textContent = initials;
+    renderAvatarElement(els.localAvatar, state.username, state.avatarColor, state.avatarUrl);
+    renderAvatarElement(document.getElementById('profile-avatar-preview'), state.username, state.avatarColor, state.avatarUrl);
+    const btnRemAv = document.getElementById('btn-remove-avatar');
+    if (btnRemAv) btnRemAv.classList.toggle('hidden', !state.avatarUrl);
     const lobbyAv = document.getElementById('lobby-avatar-preview');
-    if (lobbyAv) lobbyAv.textContent = initials;
+    if (lobbyAv) renderAvatarElement(lobbyAv, state.username, state.avatarColor, state.avatarUrl);
     const chatTag = document.getElementById('chat-room-tag');
     if (chatTag) chatTag.textContent = state.roomCode;
     els.inputProfileName.value = state.username;
@@ -4815,6 +4859,7 @@
       const data = {
         username: state.username,
         avatarColor: state.avatarColor,
+        avatarUrl: state.avatarUrl || '',
         roomCode: state.roomCode,
         currentChannelId: state.currentChannelId,
         theme: state.activeTheme,
@@ -4828,6 +4873,20 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
+      if (state.authToken) {
+        await fetch('/api/db/profile/update', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + state.authToken,
+          },
+          body: JSON.stringify({
+            displayName: state.username,
+            avatarColor: state.avatarColor,
+            avatarUrl: state.avatarUrl || '',
+          }),
+        });
+      }
     } catch (e) {}
   }
   window.__saveStudioProfile = saveProfileToServer;
@@ -4846,6 +4905,10 @@
           if (prof.avatarColor) {
             state.avatarColor = prof.avatarColor;
             localStorage.setItem('streamcord_color', prof.avatarColor);
+          }
+          if (typeof prof.avatarUrl === 'string' && prof.avatarUrl) {
+            state.avatarUrl = prof.avatarUrl;
+            localStorage.setItem('streamcord_avatar_url', prof.avatarUrl);
           }
           if (prof.roomCode && !roomFromUrl) {
             state.roomCode = prof.roomCode;
@@ -5534,6 +5597,651 @@
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
 
+  // =========================================================================
+  // 13. BANCO DE DADOS SEGURO (PBKDF2-SHA256 + JWT), UPLOAD DE FOTO & ADMIN
+  // =========================================================================
+  const btnUploadAvatar = document.getElementById('btn-upload-avatar');
+  const btnRemoveAvatar = document.getElementById('btn-remove-avatar');
+  const inputProfilePhoto = document.getElementById('input-profile-photo');
+  const btnHeaderAdmin = document.getElementById('btn-header-admin');
+  const adminPanelModal = document.getElementById('admin-panel-modal');
+  const btnCloseAdminModal = document.getElementById('btn-close-admin-modal');
+  const adminAuthGate = document.getElementById('admin-auth-gate');
+  const adminPanelContent = document.getElementById('admin-panel-content');
+
+  function compressImageFileToDataUrl(file, maxSize = 128) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = maxSize;
+          canvas.height = maxSize;
+          const ctx = canvas.getContext('2d');
+          const minSide = Math.min(img.width, img.height);
+          const sx = (img.width - minSide) / 2;
+          const sy = (img.height - minSide) / 2;
+          ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, maxSize, maxSize);
+          resolve(canvas.toDataURL('image/jpeg', 0.84));
+        };
+        img.onerror = reject;
+        img.src = reader.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  if (btnUploadAvatar && inputProfilePhoto) {
+    btnUploadAvatar.onclick = () => inputProfilePhoto.click();
+    inputProfilePhoto.onchange = async () => {
+      const file = inputProfilePhoto.files && inputProfilePhoto.files[0];
+      if (!file) return;
+      try {
+        const dataUrl = await compressImageFileToDataUrl(file, 128);
+        state.avatarUrl = dataUrl;
+        localStorage.setItem('streamcord_avatar_url', dataUrl);
+        updateLocalProfileUI();
+        lastSidebarSig = '';
+        lastStageSig = '';
+        renderChannelsSidebar();
+        renderStageParticipants();
+        refreshStreamViewerBadges();
+        announcePresence(false);
+        void saveProfileToServer();
+        showToast('Foto de perfil atualizada e sincronizada!', '📷');
+      } catch (e) {
+        showToast('Não foi possível carregar esta imagem.', '⚠️');
+      }
+      inputProfilePhoto.value = '';
+    };
+  }
+
+  if (btnRemoveAvatar) {
+    btnRemoveAvatar.onclick = () => {
+      state.avatarUrl = '';
+      localStorage.removeItem('streamcord_avatar_url');
+      updateLocalProfileUI();
+      lastSidebarSig = '';
+      lastStageSig = '';
+      renderChannelsSidebar();
+      renderStageParticipants();
+      refreshStreamViewerBadges();
+      announcePresence(false);
+      void saveProfileToServer();
+      showToast('Foto de perfil removida.', '🗑️');
+    };
+  }
+
+  function applyGlobalSettingsAndMocks(globalSettings, mockData) {
+    if (globalSettings && typeof globalSettings === 'object') {
+      state.globalSettings = { ...state.globalSettings, ...globalSettings };
+      let banner = document.getElementById('global-announcement-banner');
+      const text = String(state.globalSettings.announcement || '').trim();
+      if (text) {
+        if (!banner) {
+          banner = document.createElement('div');
+          banner.id = 'global-announcement-banner';
+          banner.className = 'global-announcement-bar';
+          const centerCol = document.querySelector('.center-column');
+          if (centerCol) centerCol.insertBefore(banner, centerCol.firstChild);
+        }
+        banner.innerHTML = `<span>📢</span><span>${escapeHtml(text)}</span>`;
+        banner.classList.remove('hidden');
+      } else if (banner) {
+        banner.classList.add('hidden');
+      }
+    }
+    if (mockData && typeof mockData === 'object') {
+      state.mockData = {
+        enabled: Boolean(mockData.enabled),
+        mockViewers: Array.isArray(mockData.mockViewers) ? mockData.mockViewers : [],
+        mockUsers: Array.isArray(mockData.mockUsers) ? mockData.mockUsers : [],
+      };
+      // Remove mocks antigos de onlineUsers e reinjeta os atuais
+      for (const uid of [...state.onlineUsers.keys()]) {
+        if (String(uid).startsWith('mock_')) {
+          state.onlineUsers.delete(uid);
+        }
+      }
+      for (const mu of state.mockData.mockUsers) {
+        if (mu && mu.id) {
+          state.onlineUsers.set(mu.id, {
+            ...mu,
+            channelId: mu.channelId || state.currentChannelId || 'gameplay-2k',
+            lastSeen: Date.now() + 3600000,
+          });
+        }
+      }
+      lastSidebarSig = '';
+      lastStageSig = '';
+      renderChannelsSidebar();
+      renderStageParticipants();
+      refreshStreamViewerBadges();
+    }
+  }
+
+  function syncAuthUI() {
+    const isAdmin = state.authRole === 'admin';
+    const isLogged = Boolean(state.authUser && state.authToken);
+    if (btnHeaderAdmin) btnHeaderAdmin.classList.toggle('hidden', !isAdmin);
+    const btnOpenAdminProf = document.getElementById('btn-open-admin-from-profile');
+    if (btnOpenAdminProf) btnOpenAdminProf.classList.toggle('hidden', !isAdmin);
+
+    const badge = document.getElementById('auth-status-badge');
+    const outBox = document.getElementById('auth-logged-out-box');
+    const inBox = document.getElementById('auth-logged-in-box');
+    const summary = document.getElementById('auth-user-summary');
+
+    if (badge) {
+      if (isAdmin) {
+        badge.textContent = '🛡️ ADMIN • PRO';
+        badge.style.background = 'rgba(168,85,247,0.22)';
+        badge.style.color = '#e9d5ff';
+      } else if (isLogged) {
+        badge.textContent = state.authPlan === 'pro' ? '⚡ CONTA PRO' : '✅ AUTENTICADO';
+        badge.style.background = 'rgba(16,185,129,0.2)';
+        badge.style.color = '#6ee7b7';
+      } else {
+        badge.textContent = 'CONVIDADO';
+        badge.style.background = 'rgba(99,102,241,0.18)';
+        badge.style.color = '#a5b4fc';
+      }
+    }
+    if (outBox) outBox.classList.toggle('hidden', isLogged);
+    if (inBox) inBox.classList.toggle('hidden', !isLogged);
+    if (summary && state.authUser) {
+      summary.textContent = `@${state.authUser.username} (${state.authRole.toUpperCase()} • ${state.authPlan.toUpperCase()})`;
+    }
+    if (adminAuthGate) adminAuthGate.classList.toggle('hidden', isAdmin);
+    if (adminPanelContent) adminPanelContent.classList.toggle('hidden', !isAdmin);
+  }
+
+  function applyAuthenticatedUser(user, token) {
+    if (!user) return;
+    state.authUser = user;
+    state.authRole = user.role || 'user';
+    state.authPlan = user.plan || 'free';
+    if (token) {
+      state.authToken = token;
+      localStorage.setItem('streamcord_auth_token', token);
+    }
+    if (user.displayName) {
+      state.username = user.displayName;
+      localStorage.setItem('streamcord_username', user.displayName);
+    }
+    if (user.avatarColor) {
+      state.avatarColor = user.avatarColor;
+      localStorage.setItem('streamcord_color', user.avatarColor);
+    }
+    if (user.avatarUrl) {
+      state.avatarUrl = user.avatarUrl;
+      localStorage.setItem('streamcord_avatar_url', user.avatarUrl);
+    }
+    updateLocalProfileUI();
+    syncAuthUI();
+    announcePresence(false);
+  }
+
+  async function checkDatabaseAuthSession() {
+    if (!IS_LOCAL_HOST) {
+      syncAuthUI();
+      return;
+    }
+    try {
+      const headers = state.authToken ? { Authorization: 'Bearer ' + state.authToken } : {};
+      const res = await fetch('/api/db/auth/me', { headers, cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.globalSettings || data.mockData) {
+        applyGlobalSettingsAndMocks(data.globalSettings, data.mockData);
+      }
+      if (data.ok && data.authenticated && data.user) {
+        applyAuthenticatedUser(data.user, state.authToken);
+      } else {
+        state.authUser = null;
+        state.authRole = 'user';
+        syncAuthUI();
+      }
+    } catch (_) {
+      syncAuthUI();
+    }
+  }
+
+  async function performDbLogin(username, password) {
+    try {
+      const res = await fetch('/api/db/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        showToast(data.error || 'Falha no login.', '❌');
+        return false;
+      }
+      applyAuthenticatedUser(data.user, data.token);
+      if (data.globalSettings || data.mockData) {
+        applyGlobalSettingsAndMocks(data.globalSettings, data.mockData);
+      }
+      showToast(`Bem-vindo, ${data.user.displayName}! (${data.user.role.toUpperCase()})`, '🛡️');
+      return true;
+    } catch (e) {
+      showToast('Servidor de banco de dados indisponível neste dispositivo.', '⚠️');
+      return false;
+    }
+  }
+
+  const btnAuthLogin = document.getElementById('btn-auth-login');
+  const btnAuthRegister = document.getElementById('btn-auth-register');
+  const btnAuthLogout = document.getElementById('btn-auth-logout');
+  const btnOpenAdminFromProfile = document.getElementById('btn-open-admin-from-profile');
+
+  if (btnAuthLogin) {
+    btnAuthLogin.onclick = async () => {
+      const u = (document.getElementById('auth-input-username')?.value || '').trim();
+      const p = document.getElementById('auth-input-password')?.value || '';
+      if (!u || !p) {
+        showToast('Digite seu usuário e senha.', '⚠️');
+        return;
+      }
+      await performDbLogin(u, p);
+    };
+  }
+
+  if (btnAuthRegister) {
+    btnAuthRegister.onclick = async () => {
+      const u = (document.getElementById('auth-input-username')?.value || '').trim();
+      const p = document.getElementById('auth-input-password')?.value || '';
+      if (!u || !p) {
+        showToast('Escolha um usuário e uma senha (mín. 6 caracteres).', '⚠️');
+        return;
+      }
+      try {
+        const res = await fetch('/api/db/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: u,
+            password: p,
+            displayName: els.inputProfileName?.value?.trim() || u,
+            avatarColor: state.avatarColor,
+            avatarUrl: state.avatarUrl || '',
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          showToast(data.error || 'Não foi possível criar a conta.', '❌');
+          return;
+        }
+        applyAuthenticatedUser(data.user, data.token);
+        showToast(`Conta @${data.user.username} criada com sucesso no banco!`, '✨');
+      } catch (e) {
+        showToast('Erro ao registrar no banco.', '⚠️');
+      }
+    };
+  }
+
+  if (btnAuthLogout) {
+    btnAuthLogout.onclick = () => {
+      state.authToken = '';
+      state.authUser = null;
+      state.authRole = 'user';
+      state.authPlan = 'free';
+      localStorage.removeItem('streamcord_auth_token');
+      syncAuthUI();
+      showToast('Sessão encerrada.', '👋');
+    };
+  }
+
+  let adminUsersCache = [];
+
+  async function refreshAdminOverview() {
+    if (state.authRole !== 'admin' || !state.authToken) return;
+    try {
+      const res = await fetch('/api/db/admin/overview', {
+        headers: { Authorization: 'Bearer ' + state.authToken },
+        cache: 'no-store',
+      });
+      const data = await res.json();
+      if (!data.ok) return;
+      adminUsersCache = Array.isArray(data.users) ? data.users : [];
+      if (data.globalSettings || data.mockData) {
+        applyGlobalSettingsAndMocks(data.globalSettings, data.mockData);
+      }
+      renderAdminMocksList();
+      renderAdminUsersList();
+      const annInput = document.getElementById('admin-announcement-input');
+      if (annInput) annInput.value = state.globalSettings.announcement || '';
+      const freeResSel = document.getElementById('admin-free-max-res');
+      if (freeResSel && state.globalSettings.freeMaxRes) freeResSel.value = state.globalSettings.freeMaxRes;
+    } catch (_) {}
+  }
+
+  async function saveAdminConfigToDb() {
+    if (state.authRole !== 'admin' || !state.authToken) return;
+    try {
+      const res = await fetch('/api/db/admin/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + state.authToken,
+        },
+        body: JSON.stringify({
+          globalSettings: state.globalSettings,
+          mockData: state.mockData,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        applyGlobalSettingsAndMocks(data.globalSettings, data.mockData);
+      }
+    } catch (_) {}
+  }
+
+  function renderAdminMocksList() {
+    const listEl = document.getElementById('admin-mocks-list');
+    if (!listEl) return;
+    const viewers = state.mockData.mockViewers || [];
+    const users = state.mockData.mockUsers || [];
+    if (viewers.length === 0 && users.length === 0) {
+      listEl.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px;">Nenhum dado mockado ativo no momento.</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    viewers.forEach((mv) => {
+      const row = document.createElement('div');
+      row.className = 'cm-item';
+      row.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="viewer-avatar-dot" style="margin:0;background:${escapeHtml(mv.avatarColor || '#5865F2')};">${
+            mv.avatarUrl ? `<img src="${escapeHtml(mv.avatarUrl)}" alt="" />` : escapeHtml(getUserInitials(mv.username))
+          }</span>
+          <span style="font-size:12.5px;font-weight:600;">${escapeHtml(mv.username)}</span>
+          <span class="plan-pill is-pro">👁️ Espectador da Stream</span>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" data-del-viewer="${escapeHtml(mv.id)}">Remover</button>
+      `;
+      row.querySelector('[data-del-viewer]').onclick = () => {
+        state.mockData.mockViewers = state.mockData.mockViewers.filter((x) => x.id !== mv.id);
+        applyGlobalSettingsAndMocks(state.globalSettings, state.mockData);
+        renderAdminMocksList();
+        void saveAdminConfigToDb();
+      };
+      listEl.appendChild(row);
+    });
+
+    users.forEach((mu) => {
+      const row = document.createElement('div');
+      row.className = 'cm-item';
+      row.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="viewer-avatar-dot" style="margin:0;background:${escapeHtml(mu.avatarColor || '#5865F2')};">${
+            mu.avatarUrl ? `<img src="${escapeHtml(mu.avatarUrl)}" alt="" />` : escapeHtml(getUserInitials(mu.username))
+          }</span>
+          <span style="font-size:12.5px;font-weight:600;">${escapeHtml(mu.username)}</span>
+          <span class="plan-pill ${mu.streaming ? 'is-admin' : 'is-free'}">${mu.streaming ? '🔴 Streamer Fake' : '🟢 Online Fake'}</span>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" data-del-user="${escapeHtml(mu.id)}">Remover</button>
+      `;
+      row.querySelector('[data-del-user]').onclick = () => {
+        state.mockData.mockUsers = state.mockData.mockUsers.filter((x) => x.id !== mu.id);
+        applyGlobalSettingsAndMocks(state.globalSettings, state.mockData);
+        renderAdminMocksList();
+        void saveAdminConfigToDb();
+      };
+      listEl.appendChild(row);
+    });
+  }
+
+  function renderAdminUsersList() {
+    const listEl = document.getElementById('admin-users-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    adminUsersCache.forEach((u) => {
+      const row = document.createElement('div');
+      row.className = 'cm-item';
+      const isPro = u.plan === 'pro';
+      const isAdmin = u.role === 'admin';
+      row.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="viewer-avatar-dot" style="margin:0;background:${escapeHtml(u.avatarColor || '#5865F2')};">${
+            u.avatarUrl ? `<img src="${escapeHtml(u.avatarUrl)}" alt="" />` : escapeHtml(getUserInitials(u.displayName || u.username))
+          }</span>
+          <strong style="font-size:12.5px;">${escapeHtml(u.displayName || u.username)}</strong>
+          <span class="mono" style="font-size:11px;color:var(--text-muted);">@${escapeHtml(u.username)}</span>
+          <span class="plan-pill ${isAdmin ? 'is-admin' : 'is-free'}">${isAdmin ? 'ADMIN' : 'USER'}</span>
+          <span class="plan-pill ${isPro ? 'is-pro' : 'is-free'}">${isPro ? 'PRO' : 'FREE'}</span>
+          ${u.isBanned ? '<span class="plan-pill" style="background:rgba(239,68,68,0.2);color:#fca5a5;">BANIDO</span>' : ''}
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-secondary btn-sm" data-act="plan">${isPro ? 'Tornar Free' : '⚡ Dar PRO'}</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="role">${isAdmin ? 'Tirar Admin' : '🛡️ Admin'}</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="ban">${u.isBanned ? 'Desbanir' : '🚫 Banir'}</button>
+        </div>
+      `;
+      row.querySelector('[data-act="plan"]').onclick = async () => {
+        await updateAdminDbUser({ id: u.id, plan: isPro ? 'free' : 'pro' });
+      };
+      row.querySelector('[data-act="role"]').onclick = async () => {
+        await updateAdminDbUser({ id: u.id, role: isAdmin ? 'user' : 'admin' });
+      };
+      row.querySelector('[data-act="ban"]').onclick = async () => {
+        await updateAdminDbUser({ id: u.id, isBanned: !u.isBanned });
+      };
+      listEl.appendChild(row);
+    });
+  }
+
+  async function updateAdminDbUser(payload) {
+    if (state.authRole !== 'admin' || !state.authToken) return;
+    try {
+      const res = await fetch('/api/db/admin/user-update', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + state.authToken,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.users)) {
+        adminUsersCache = data.users;
+        renderAdminUsersList();
+        showToast('Banco de dados atualizado!', '✅');
+      } else {
+        showToast(data.error || 'Erro ao atualizar usuário.', '❌');
+      }
+    } catch (_) {}
+  }
+
+  function openAdminPanelModal() {
+    if (!adminPanelModal) return;
+    els.inviteModal.classList.add('hidden');
+    adminPanelModal.classList.remove('hidden');
+    syncAuthUI();
+    if (state.authRole === 'admin') {
+      void refreshAdminOverview();
+    }
+  }
+
+  if (btnHeaderAdmin) btnHeaderAdmin.onclick = openAdminPanelModal;
+  if (btnOpenAdminFromProfile) btnOpenAdminFromProfile.onclick = openAdminPanelModal;
+  if (btnCloseAdminModal) btnCloseAdminModal.onclick = () => adminPanelModal.classList.add('hidden');
+
+  // Atalho secreto exclusivo para o dono do app: Ctrl + Shift + A
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+      e.preventDefault();
+      openAdminPanelModal();
+    }
+  });
+
+  const btnAdminGateLogin = document.getElementById('btn-admin-gate-login');
+  if (btnAdminGateLogin) {
+    btnAdminGateLogin.onclick = async () => {
+      const u = (document.getElementById('admin-gate-user')?.value || 'igor').trim();
+      const p = document.getElementById('admin-gate-pass')?.value || '';
+      const ok = await performDbLogin(u, p);
+      if (ok && state.authRole === 'admin') {
+        void refreshAdminOverview();
+      }
+    };
+  }
+
+  const adminTabsBar = document.getElementById('admin-tabs-bar');
+  if (adminTabsBar) {
+    adminTabsBar.querySelectorAll('[data-admin-tab]').forEach((btn) => {
+      btn.onclick = () => {
+        const tab = btn.dataset.adminTab;
+        adminTabsBar.querySelectorAll('[data-admin-tab]').forEach((b) => b.classList.toggle('is-active', b === btn));
+        ['mocks', 'users', 'rules', 'security'].forEach((t) => {
+          const pane = document.getElementById('admin-tab-' + t);
+          if (pane) pane.classList.toggle('hidden', t !== tab);
+        });
+      };
+    });
+  }
+
+  const btnAdminAddMock = document.getElementById('btn-admin-add-mock');
+  if (btnAdminAddMock) {
+    btnAdminAddMock.onclick = () => {
+      const nameInput = document.getElementById('mock-user-name');
+      const avInput = document.getElementById('mock-user-avatar');
+      const modeSel = document.getElementById('mock-user-mode');
+      const name = (nameInput?.value || '').trim() || 'Player_' + Math.floor(100 + Math.random() * 900);
+      const avatarUrl = (avInput?.value || '').trim();
+      const mode = modeSel?.value || 'viewer';
+      const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+      const id = 'mock_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5);
+
+      if (mode === 'viewer') {
+        state.mockData.mockViewers.push({ id, username: name, avatarColor: color, avatarUrl });
+      } else {
+        state.mockData.mockUsers.push({
+          id,
+          username: name,
+          avatarColor: color,
+          avatarUrl,
+          channelId: state.currentChannelId || 'gameplay-2k',
+          streaming: mode === 'streamer',
+          watchingIds: [state.clientId],
+          streamConfig: mode === 'streamer' ? { resolution: '1080p', fps: 60, hasAudio: true } : null,
+        });
+      }
+      state.mockData.enabled = true;
+      if (nameInput) nameInput.value = '';
+      if (avInput) avInput.value = '';
+      applyGlobalSettingsAndMocks(state.globalSettings, state.mockData);
+      renderAdminMocksList();
+      void saveAdminConfigToDb();
+      showToast(`Mock "${name}" adicionado em tempo real!`, '🎭');
+    };
+  }
+
+  const btnAdminPresetMocks = document.getElementById('btn-admin-preset-mocks');
+  if (btnAdminPresetMocks) {
+    btnAdminPresetMocks.onclick = () => {
+      const demoSquad = [
+        { name: 'Lucas_RTX', color: '#57F287', streaming: true },
+        { name: 'Mariana_2K', color: '#EB459E', streaming: false },
+        { name: 'Biel_FPS', color: '#5865F2', streaming: false },
+        { name: 'Kaio_Nitro', color: '#FEE75C', streaming: false },
+      ];
+      state.mockData.mockViewers = demoSquad.map((d, i) => ({
+        id: 'mock_v_' + i,
+        username: d.name,
+        avatarColor: d.color,
+        avatarUrl: '',
+      }));
+      state.mockData.mockUsers = demoSquad.map((d, i) => ({
+        id: 'mock_u_' + i,
+        username: d.name,
+        avatarColor: d.color,
+        avatarUrl: '',
+        channelId: state.currentChannelId || 'gameplay-2k',
+        streaming: d.streaming,
+        watchingIds: [state.clientId],
+        streamConfig: d.streaming ? { resolution: '1440p 2K', fps: 60, hasAudio: true } : null,
+      }));
+      state.mockData.enabled = true;
+      applyGlobalSettingsAndMocks(state.globalSettings, state.mockData);
+      renderAdminMocksList();
+      void saveAdminConfigToDb();
+      showToast('Squad Demo (4 amigos + espectadores) ativado!', '⚡');
+    };
+  }
+
+  const btnAdminClearMocks = document.getElementById('btn-admin-clear-mocks');
+  if (btnAdminClearMocks) {
+    btnAdminClearMocks.onclick = () => {
+      state.mockData.enabled = false;
+      state.mockData.mockViewers = [];
+      state.mockData.mockUsers = [];
+      applyGlobalSettingsAndMocks(state.globalSettings, state.mockData);
+      renderAdminMocksList();
+      void saveAdminConfigToDb();
+      showToast('Todos os dados mockados foram removidos.', '🧹');
+    };
+  }
+
+  const btnAdminCreateUser = document.getElementById('btn-admin-create-user');
+  if (btnAdminCreateUser) {
+    btnAdminCreateUser.onclick = async () => {
+      const username = (document.getElementById('admin-new-username')?.value || '').trim();
+      const displayName = (document.getElementById('admin-new-display')?.value || '').trim() || username;
+      const password = document.getElementById('admin-new-password')?.value || 'StreamCord123';
+      const plan = document.getElementById('admin-new-plan')?.value || 'free';
+      if (!username) {
+        showToast('Informe o login do usuário.', '⚠️');
+        return;
+      }
+      await updateAdminDbUser({ action: 'create', username, displayName, password, plan });
+    };
+  }
+
+  const btnAdminSaveRules = document.getElementById('btn-admin-save-rules');
+  if (btnAdminSaveRules) {
+    btnAdminSaveRules.onclick = async () => {
+      state.globalSettings.announcement = (document.getElementById('admin-announcement-input')?.value || '').trim();
+      state.globalSettings.freeMaxRes = document.getElementById('admin-free-max-res')?.value || '1080';
+      state.globalSettings.proMaxRes = document.getElementById('admin-pro-max-res')?.value || '1440';
+      await saveAdminConfigToDb();
+      showToast('Regras e anúncio global salvos no banco!', '💾');
+    };
+  }
+
+  const btnAdminChangePwd = document.getElementById('btn-admin-change-pwd');
+  if (btnAdminChangePwd) {
+    btnAdminChangePwd.onclick = async () => {
+      const currentPassword = document.getElementById('admin-cur-pwd')?.value || '';
+      const newPassword = document.getElementById('admin-new-pwd')?.value || '';
+      if (!currentPassword || !newPassword) {
+        showToast('Preencha a senha atual e a nova senha.', '⚠️');
+        return;
+      }
+      try {
+        const res = await fetch('/api/db/admin/change-password', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + state.authToken,
+          },
+          body: JSON.stringify({ currentPassword, newPassword }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          showToast('Senha do Admin atualizada com sucesso (PBKDF2-SHA256)!', '🔑');
+          document.getElementById('admin-cur-pwd').value = '';
+          document.getElementById('admin-new-pwd').value = '';
+        } else {
+          showToast(data.error || 'Erro ao alterar senha.', '❌');
+        }
+      } catch (_) {}
+    };
+  }
+
   const verTagEl = document.getElementById('sidebar-version-tag');
   if (verTagEl) verTagEl.textContent = 'v' + APP_VERSION;
   if (els.statLoss) els.statLoss.textContent = 'v' + APP_VERSION;
@@ -5543,6 +6251,7 @@
   updateFavoriteButtonUI();
   renderChannelsSidebar();
   loadProfileFromServer().finally(() => {
+    void checkDatabaseAuthSession();
     void ensureTurnQuotaChecked();
     void ensureIceServersReady();
     updateLocalProfileUI();

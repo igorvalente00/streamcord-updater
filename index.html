@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css?v=9.16.10" />
+    <link rel="stylesheet" href="./styles.css?v=9.17.0" />
   </head>
   <body data-theme="nitro-ultra" data-layout="standard" data-mobile-tab="stage">
     <!-- Toast Notifications -->
@@ -309,6 +309,10 @@
           </div>
 
           <div class="room-header-right">
+            <button id="btn-header-admin" type="button" class="btn btn-secondary btn-sm admin-header-btn hidden" title="Painel Admin Exclusivo (Ctrl+Shift+A)">
+              🛡️ Admin
+            </button>
+
             <button id="btn-header-update" type="button" class="btn btn-secondary btn-sm update-btn hidden" title="Nova atualização disponível!">
               <span id="update-btn-label">⬇️ Atualizar</span>
             </button>
@@ -630,16 +634,49 @@
 
         <div class="modal-body">
           <div class="setting-block">
-            <label for="input-profile-name" class="field-label">Seu apelido</label>
-            <input id="input-profile-name" type="text" class="text-input" maxlength="24" />
-          </div>
-          <div class="setting-block">
-            <label for="input-room-code" class="field-label">Código da sala</label>
-            <input id="input-room-code" type="text" class="text-input mono" maxlength="24" />
+            <span class="field-label">Foto de perfil e apelido</span>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div id="profile-avatar-preview" class="avatar" style="width:48px;height:48px;font-size:16px;flex-shrink:0;overflow:hidden;">SC</div>
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                <input id="input-profile-name" type="text" class="text-input" maxlength="24" placeholder="Seu apelido" />
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <input id="input-profile-photo" type="file" accept="image/*" class="hidden" />
+                  <button id="btn-upload-avatar" type="button" class="btn btn-secondary btn-sm">📷 Escolher Foto</button>
+                  <button id="btn-remove-avatar" type="button" class="btn btn-ghost btn-sm hidden">Remover Foto</button>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="setting-block">
             <span class="field-label">Cor do avatar</span>
             <div id="avatar-color-picker" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+          </div>
+          <div class="setting-block">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <span class="field-label">Conta no Banco de Dados (JWT Seguro)</span>
+              <span id="auth-status-badge" class="badge-live" style="background:rgba(99,102,241,0.18);color:#a5b4fc;">CONVIDADO</span>
+            </div>
+            <div id="auth-logged-out-box" style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
+              <div style="display:flex;gap:6px;">
+                <input id="auth-input-username" type="text" class="text-input" placeholder="Usuário (ex: igor)" maxlength="28" />
+                <input id="auth-input-password" type="password" class="text-input" placeholder="Senha" maxlength="64" />
+              </div>
+              <div style="display:flex;gap:6px;">
+                <button id="btn-auth-login" type="button" class="btn btn-primary btn-sm" style="flex:1;">🔑 Entrar na Conta</button>
+                <button id="btn-auth-register" type="button" class="btn btn-secondary btn-sm" style="flex:1;">✨ Criar Conta</button>
+              </div>
+            </div>
+            <div id="auth-logged-in-box" class="hidden" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:8px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);">
+              <span id="auth-user-summary" style="font-size:12px;color:#d1fae5;font-weight:600;">Logado</span>
+              <div style="display:flex;gap:6px;">
+                <button id="btn-open-admin-from-profile" type="button" class="btn btn-primary btn-sm hidden">🛡️ Painel Admin</button>
+                <button id="btn-auth-logout" type="button" class="btn btn-ghost btn-sm">Sair</button>
+              </div>
+            </div>
+          </div>
+          <div class="setting-block">
+            <label for="input-room-code" class="field-label">Código da sala</label>
+            <input id="input-room-code" type="text" class="text-input mono" maxlength="24" />
           </div>
           <div class="setting-block" style="display:flex;flex-direction:column;gap:8px;">
             <button id="btn-copy-invite-page" type="button" class="btn btn-primary">Copiar Link de Convite</button>
@@ -728,6 +765,121 @@
           <div class="setting-block">
             <span class="field-label field-label-inline">Usuários banidos da sala</span>
             <div id="banned-users-list" class="cm-banned-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL PAINEL ADMIN EXCLUSIVO (RBAC Server-Side + Dados Mockados + Banco de Dados) -->
+    <div id="admin-panel-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-header">
+          <div>
+            <h2 class="modal-title">🛡️ Painel Admin & Banco de Dados</h2>
+            <p class="modal-subtitle">Acesso exclusivo autenticado via JWT HMAC-SHA256 • Controle de Mocks, Usuários e Regras</p>
+          </div>
+          <button id="btn-close-admin-modal" type="button" class="btn-icon" title="Fechar">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <!-- Tela de Login Admin rápido caso ainda não esteja autenticado como admin -->
+          <div id="admin-auth-gate" class="setting-block hidden" style="padding:14px;border-radius:10px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.3);">
+            <span class="field-label">🔒 Autenticação de Administrador Obrigatória</span>
+            <p class="field-hint">Entre com sua conta Admin do banco de dados para desbloquear os controles do servidor.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+              <input id="admin-gate-user" type="text" class="text-input" placeholder="Usuário admin (igor)" value="igor" style="flex:1;min-width:130px;" />
+              <input id="admin-gate-pass" type="password" class="text-input" placeholder="Senha do Admin" style="flex:1;min-width:150px;" />
+              <button id="btn-admin-gate-login" type="button" class="btn btn-primary">Desbloquear Admin</button>
+            </div>
+          </div>
+
+          <div id="admin-panel-content" class="hidden" style="display:flex;flex-direction:column;gap:14px;">
+            <div class="segmented-control" id="admin-tabs-bar">
+              <button type="button" class="segmented-btn is-active" data-admin-tab="mocks">🎭 Dados Mockados</button>
+              <button type="button" class="segmented-btn" data-admin-tab="users">👥 Usuários & Planos</button>
+              <button type="button" class="segmented-btn" data-admin-tab="rules">⚙️ Regras & Anúncio</button>
+              <button type="button" class="segmented-btn" data-admin-tab="security">🔑 Senha Admin</button>
+            </div>
+
+            <!-- ABA 1: DADOS MOCKADOS -->
+            <div id="admin-tab-mocks" class="admin-tab-pane">
+              <div class="setting-block" style="padding:12px;border-radius:10px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                  <div>
+                    <div class="field-label">Simulador de Dados Mockados em Tempo Real</div>
+                    <p class="field-hint">Injeta espectadores com fotos de perfil na stream e participantes ao vivo na sala para testes e vídeos comerciais.</p>
+                  </div>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button id="btn-admin-preset-mocks" type="button" class="btn btn-primary btn-sm">⚡ Gerar Squad Demo (4 Amigos)</button>
+                    <button id="btn-admin-clear-mocks" type="button" class="btn btn-ghost btn-sm">Limpar Mocks</button>
+                  </div>
+                </div>
+
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">
+                  <input id="mock-user-name" type="text" class="text-input" placeholder="Nome (ex: Lucas_RTX)" style="flex:1;min-width:130px;" />
+                  <input id="mock-user-avatar" type="text" class="text-input" placeholder="URL da Foto (opcional)" style="flex:1;min-width:150px;" />
+                  <select id="mock-user-mode" class="select-input" style="width:auto;min-width:175px;">
+                    <option value="viewer">👁️ Assistindo Minha Stream</option>
+                    <option value="streamer">🔴 Transmitindo 1080p 60FPS</option>
+                    <option value="online">🟢 Online no Canal</option>
+                  </select>
+                  <button id="btn-admin-add-mock" type="button" class="btn btn-secondary btn-sm">+ Adicionar</button>
+                </div>
+
+                <div id="admin-mocks-list" class="cm-list" style="margin-top:10px;max-height:200px;overflow-y:auto;"></div>
+              </div>
+            </div>
+
+            <!-- ABA 2: USUÁRIOS & PLANOS NO BANCO -->
+            <div id="admin-tab-users" class="admin-tab-pane hidden">
+              <div class="setting-block">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <input id="admin-new-username" type="text" class="text-input" placeholder="Usuário (login)" style="flex:1;min-width:110px;" />
+                  <input id="admin-new-display" type="text" class="text-input" placeholder="Nome exibido" style="flex:1;min-width:120px;" />
+                  <input id="admin-new-password" type="text" class="text-input" placeholder="Senha inicial" style="flex:1;min-width:110px;" />
+                  <select id="admin-new-plan" class="select-input" style="width:auto;">
+                    <option value="free">Plano FREE</option>
+                    <option value="pro">Plano PRO</option>
+                  </select>
+                  <button id="btn-admin-create-user" type="button" class="btn btn-primary btn-sm">+ Criar no Banco</button>
+                </div>
+                <div id="admin-users-list" class="cm-list" style="margin-top:10px;max-height:240px;overflow-y:auto;"></div>
+              </div>
+            </div>
+
+            <!-- ABA 3: REGRAS GLOBAIS & ANÚNCIO -->
+            <div id="admin-tab-rules" class="admin-tab-pane hidden">
+              <div class="setting-block">
+                <label class="field-label" for="admin-announcement-input">📢 Banner de Anúncio Global (visível no topo do app)</label>
+                <input id="admin-announcement-input" type="text" class="text-input" placeholder="Deixe vazio para ocultar (ex: 🚀 Bem-vindos ao StreamCord Pro!)" />
+              </div>
+              <div class="settings-grid-2">
+                <div class="setting-block">
+                  <label class="field-label" for="admin-free-max-res">Teto Plano Grátis (P2P)</label>
+                  <select id="admin-free-max-res" class="select-input">
+                    <option value="720">720p HD</option>
+                    <option value="1080" selected>1080p Full HD</option>
+                  </select>
+                </div>
+                <div class="setting-block">
+                  <label class="field-label" for="admin-pro-max-res">Teto Plano PRO / Nitro</label>
+                  <select id="admin-pro-max-res" class="select-input">
+                    <option value="1440" selected>1440p 2K QHD / Nativa</option>
+                  </select>
+                </div>
+              </div>
+              <button id="btn-admin-save-rules" type="button" class="btn btn-primary btn-sm" style="align-self:flex-start;">💾 Salvar Regras no Banco & Sincronizar</button>
+            </div>
+
+            <!-- ABA 4: SEGURANÇA ADMIN -->
+            <div id="admin-tab-security" class="admin-tab-pane hidden">
+              <div class="setting-block">
+                <span class="field-label">Alterar Senha do Administrador (PBKDF2-HMAC-SHA256)</span>
+                <input id="admin-cur-pwd" type="password" class="text-input" placeholder="Senha atual" />
+                <input id="admin-new-pwd" type="password" class="text-input" placeholder="Nova senha (mín. 6 caracteres)" />
+                <button id="btn-admin-change-pwd" type="button" class="btn btn-primary btn-sm" style="align-self:flex-start;">🔑 Atualizar Senha no Banco</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -875,6 +1027,6 @@
         if (sidebarSettings && streamSettings) sidebarSettings.addEventListener('click', () => streamSettings.click());
       })();
     </script>
-    <script src="./app.js?v=9.16.10"></script>
+    <script src="./app.js?v=9.17.0"></script>
   </body>
 </html>
