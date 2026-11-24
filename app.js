@@ -1,6 +1,6 @@
-// StreamCord v9.14.0 — Google AI Studio UI 100% Fiel + Mixer WASAPI Relógio Mestre 10ms + Favoritos Persistentes
+// StreamCord v9.18.1 — Qualidade Máxima Híbrida (NVENC p4 • CQ 21/22 • Blindagem de Resolução)
 (() => {
-  const APP_VERSION = '9.17.2';
+  const APP_VERSION = '9.18.1';
   const IS_LOCAL_HOST = /^(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])$/i.test(window.location.hostname);
 
   const FALLBACK_STUN_SERVERS = [
@@ -2078,12 +2078,14 @@
 
   function buildNativeGpuWsUrl(cfg, resSpec, wsProto, turnEconomy = false) {
     const targetH = cfg.resolution === 'source' ? 0 : (resSpec.heightNum || 1080);
-    // P2P Direto (custo $0): teto normal; TURN (Cloudflare): modo econômico (-cq 29, 2.2-4.8 Mbps -> ~1.1-1.5 GB/h em 1080p!)
+    // Qualidade Máxima Híbrida:
+    // P2P Direto: até 15-25 Mbps, CQ 21 (qualidade cristalina de estúdio)
+    // TURN Cloudflare: 9.5-16 Mbps, CQ 22 (1080p/2K super limpo sem borrões no Deadlock!)
     const maxVbrByRes = turnEconomy
-      ? (targetH > 0 && targetH <= 720 ? 2200 : (targetH > 0 && targetH <= 1080 ? 3400 : 4800))
-      : (targetH > 0 && targetH <= 720 ? 4500 : (targetH > 0 && targetH <= 1080 ? 6500 : 9000));
-    const reqBitrate = Math.min(maxVbrByRes, Math.max(turnEconomy ? 1600 : 2500, Number(cfg.bitrateKbps) || maxVbrByRes));
-    const cqParam = turnEconomy ? 29 : 26;
+      ? (targetH > 0 && targetH <= 720 ? 6000 : (targetH > 0 && targetH <= 1080 ? 9500 : 16000))
+      : (targetH > 0 && targetH <= 720 ? 8000 : (targetH > 0 && targetH <= 1080 ? 14000 : 25000));
+    const reqBitrate = Math.min(maxVbrByRes, Math.max(turnEconomy ? 6000 : 8000, Number(cfg.bitrateKbps) || maxVbrByRes));
+    const cqParam = turnEconomy ? 22 : 21;
     const monMatch = String(state.selectedSourceId || '').match(/^monitor:(\d+)$/);
     const winMatch = String(state.selectedSourceId || '').match(/^window:(\d+)$/);
     const monIdx = monMatch ? Number(monMatch[1]) : 0;
@@ -2775,17 +2777,15 @@
     return out.join('\r\n');
   }
 
-  // Teto adaptativo econômico por rota e resolução:
-  // • P2P Direto: libera até 25 Mbps (custo 0 GB na Cloudflare!)
-  // • TURN UDP (Cloudflare): 720p -> 2.0 Mbps (~0.9 GB/h), 1080p -> 3.5 Mbps (~1.5 GB/h), 2K+ -> 5.0 Mbps
-  // • TURN TCP (último recurso): reduz mais ~25% para evitar TCP Head-of-Line Blocking
+  // Teto adaptativo de alta performance por rota e resolução:
+  // • P2P Direto: até 25 Mbps (custo $0 na Cloudflare!)
+  // • TURN UDP (Cloudflare): 720p -> 8.5 Mbps, 1080p -> 14 Mbps, 2K -> 22 Mbps (Qualidade Máxima Híbrida)
+  // • TURN TCP (último recurso): até 10-16 Mbps
   function getTurnRelayCapBps(height, protocol) {
     const isTcp = protocol === 'tcp';
-    // Sem B-frames no WebRTC, 60 FPS reais em jogos rápidos (Deadlock/FPS) exigem >= 6 Mbps em 720p e >= 8.5 Mbps em 1080p
-    // para o FrameDropper do WebRTC não descartar 1 a cada 3 quadros (60 -> 40 FPS).
-    if (height <= 720) return isTcp ? 4_000_000 : 6_000_000;
-    if (height <= 1080) return isTcp ? 5_500_000 : 8_500_000;
-    return isTcp ? 7_000_000 : 11_000_000;
+    if (height <= 720) return isTcp ? 6_500_000 : 8_500_000;
+    if (height <= 1080) return isTcp ? 10_000_000 : 14_000_000;
+    return isTcp ? 16_000_000 : 22_000_000;
   }
 
   function getViewerEncoding(entry = null) {
@@ -2798,8 +2798,8 @@
       ? Math.min(selectedHeight, sourceHeight >= 360 ? sourceHeight : selectedHeight)
       : (sourceHeight >= 360 ? sourceHeight : 1080);
 
-    const totalBps = Math.min(25000, Math.max(2000, Number(bitrateKbps) || 10000)) * 1000;
-    const minFloorBps = entry && entry.isRelayed ? 1_500_000 : 2_500_000;
+    const totalBps = Math.min(25000, Math.max(4000, Number(bitrateKbps) || 10000)) * 1000;
+    const minFloorBps = entry && entry.isRelayed ? 4_500_000 : 6_000_000;
     let perViewerBps = Math.max(minFloorBps, Math.floor(totalBps / count));
 
     if (entry && entry.isRelayed) {
@@ -2808,14 +2808,10 @@
     }
 
     // Calcula o fator de escala para o encoder de hardware (NVENC/D3D11) reduzir diretamente na GPU
-    // sem exigir cópia VRAM -> RAM no getDisplayMedia!
+    // sem exigir cópia VRAM -> RAM no getDisplayMedia! Nunca reduz abaixo da resolução configurada.
     let scale = 1;
     if (sourceHeight >= 360 && selectedHeight && sourceHeight > selectedHeight) {
       scale = sourceHeight / selectedHeight;
-    }
-    if (perViewerBps < 2500000 && height > 720) {
-      const targetScale720 = sourceHeight >= 360 ? sourceHeight / 720 : height / 720;
-      scale = Math.max(scale, Math.min(targetScale720, Math.sqrt(2500000 / perViewerBps)));
     }
 
     return {
@@ -2859,12 +2855,8 @@
         const params = entry.videoSender.getParameters();
         if (!params.encodings?.length) return;
         Object.assign(params.encodings[0], encoding);
-        // Prioriza 60 FPS cravados ('maintain-framerate') quando FPS > 30 ou modo movimento;
-        // evita que o Chromium corte a taxa pela metade (60 -> 30 FPS) em oscilações ou no TURN!
-        const targetDeg = (state.streamSettings.preset === 'detail' && (state.streamSettings.fps || 60) <= 30)
-          ? 'maintain-resolution'
-          : 'maintain-framerate';
-        params.degradationPreference = targetDeg;
+        // Blindagem de Resolução: sempre prioriza nitidez máxima sem nunca borrifar ou rebaixar a tela
+        params.degradationPreference = 'maintain-resolution';
         try {
           await entry.videoSender.setParameters(params);
         } catch (degErr) {
@@ -2963,9 +2955,9 @@
     };
 
     if (!allowTurn) {
-      // Fase 1 (P2P Estreito): tenta 100% STUN/IPv4/IPv6 sem TURN por 3.8s;
-      // só recorre ao Cloudflare TURN se o P2P realmente não fechar (ex.: 4G/5G/CGNAT).
-      outEntry.p2pFallbackTimer = setTimeout(triggerTurnFallback, 3800);
+      // Fase 1 (P2P Direto): tenta STUN/IPv4/IPv6 por 7.5s com tolerância total;
+      // só recorre ao Cloudflare TURN se o P2P realmente não fechar (ex.: CGNAT estrito).
+      outEntry.p2pFallbackTimer = setTimeout(triggerTurnFallback, 7500);
     }
 
     const sendOrQueueIce = (cand) => {
